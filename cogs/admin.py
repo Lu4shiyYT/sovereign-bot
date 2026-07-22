@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from database import get_conn, init_db
+from database import get_conn, init_db, async_fetch_one, async_execute
 from data.countries import initial_countries, initial_provinces
 import os
 import asyncio
@@ -12,7 +12,6 @@ class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # Вспомогательная функция, выполняемая в фоновом потоке
     def _init_game_sync(self):
         """Синхронная часть инициализации (вызывается через asyncio.to_thread)"""
         conn = get_conn()
@@ -24,7 +23,7 @@ class Admin(commands.Cog):
         conn.commit()
         conn.close()
 
-        init_db()  # создаёт таблицы с колонками population, army_count
+        init_db()
 
         conn = get_conn()
         cur = conn.cursor()
@@ -59,11 +58,8 @@ class Admin(commands.Cog):
     @app_commands.command(name="init_game", description="Инициализировать игру (админ) – полностью пересоздаёт базу")
     @app_commands.default_permissions(administrator=True)
     async def init_game(self, interaction: discord.Interaction):
-        # Мгновенно подтверждаем получение команды
         await interaction.response.defer(ephemeral=True, thinking=True)
-
         try:
-            # Запускаем тяжелую операцию в фоновом потоке
             result = await asyncio.to_thread(self._init_game_sync)
             if result:
                 await interaction.followup.send("✅ Игра инициализирована! Все страны созданы, база пересоздана.", ephemeral=True)
@@ -94,6 +90,32 @@ class Admin(commands.Cog):
             await interaction.response.send_message("База данных восстановлена! Прогресс загружен.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"Ошибка при восстановлении: {e}", ephemeral=True)
+
+    # ----- НОВАЯ КОМАНДА ДЛЯ ВЫДАЧИ ДЕНЕГ -----
+    @app_commands.command(name="give_money", description="Выдать деньги стране (только админ)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(target="Игрок, которому выдать деньги", amount="Сумма в долларах")
+    async def give_money(self, interaction: discord.Interaction, target: discord.Member, amount: int):
+        if amount <= 0:
+            await interaction.response.send_message("Сумма должна быть положительной.", ephemeral=True)
+            return
+
+        # Ищем страну игрока
+        country = await async_fetch_one("SELECT id, name FROM countries WHERE owner_id = ?", (target.id,))
+        if not country:
+            await interaction.response.send_message(f"Игрок {target.mention} не управляет страной.", ephemeral=True)
+            return
+
+        # Выдаём деньги
+        await async_execute(
+            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+            (country['id'], amount, amount)
+        )
+        await interaction.response.send_message(
+            f"✅ Выдано {amount:,} долларов стране **{country['name']}** (игрок {target.mention}).",
+            ephemeral=True
+        )
+
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))
