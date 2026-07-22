@@ -1,8 +1,9 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from database import get_conn
 import time
+import asyncio
 
 # ========================
 # ДАННЫЕ О ПОСТРОЙКАХ
@@ -10,9 +11,9 @@ import time
 BUILDING_TYPES = {
     "Ферма": {
         "cost": {"Продовольствие": 50},
-        "build_time": 60,          # в секундах! (60 сек = 1 мин для теста, потом увеличим)
+        "build_time": 60,          # секунд (для теста)
         "upgrade_multiplier": 1.5,
-        "produces": {"Продовольствие": 10}  # за игровой месяц
+        "produces": {"Продовольствие": 10}
     },
     "Шахта": {
         "cost": {"Уголь": 100},
@@ -30,7 +31,7 @@ BUILDING_TYPES = {
         "cost": {"Продовольствие": 150, "Доллары": 100},
         "build_time": 150,
         "upgrade_multiplier": 1.7,
-        "produces": {}  # не производит ресурсы, открывает юнитов (позже)
+        "produces": {}
     },
     "Лаборатория": {
         "cost": {"Доллары": 300, "Электроэнергия": 100},
@@ -59,7 +60,10 @@ class GameMenu(discord.ui.View):
 
     @discord.ui.button(label="🏭 Постройки", style=discord.ButtonStyle.primary)
     async def buildings_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="Загрузка...", view=BuildingsView(self.country_id))
+        view = BuildingsView(self.country_id)
+        await interaction.response.edit_message(content="Меню построек", view=view)
+        # Запускаем фоновое обновление таймера
+        view.start_updating(interaction.message)
 
     @discord.ui.button(label="💰 Ресурсы", style=discord.ButtonStyle.primary)
     async def resources_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -83,26 +87,23 @@ class BuildingsView(discord.ui.View):
     def __init__(self, country_id):
         super().__init__(timeout=None)
         self.country_id = country_id
-        self.update_buttons()
+        self.message = None
+        self.update_task = None
+        self.add_buttons()
 
-    def update_buttons(self):
-        """Создаёт кнопки для каждой постройки с учётом состояния страны"""
+    def add_buttons(self):
+        """Формирует кнопки на основе текущего состояния построек"""
         self.clear_items()
         conn = get_conn()
         cur = conn.cursor()
         now = time.time()
 
         for b_type, data in BUILDING_TYPES.items():
-            # Получаем текущее состояние постройки
             cur.execute("SELECT level, build_end_time FROM buildings WHERE country_id=? AND building_type=?",
                         (self.country_id, b_type))
             row = cur.fetchone()
-            if row is None:
-                level = 0
-                end_time = 0
-            else:
-                level = row['level']
-                end_time = row['build_end_time']
+            level = 0 if row is None else row['level']
+            end_time = row['build_end_time'] if row else 0
 
             if level >= 10:
                 label = f"{b_type} (макс.)"
@@ -116,15 +117,76 @@ class BuildingsView(discord.ui.View):
                 label = f"{b_type} (ур.{level} → {next_level})"
                 disabled = False
 
-            button = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, disabled=disabled, custom_id=b_type)
-            button.callback = self.make_callback(b_type)
-            self.add_item(button)
+            btn = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, disabled=disabled, custom_id=b_type)
+            btn.callback = self.make_callback(b_type)
+            self.add_item(btn)
 
-        # Кнопка назад
-        back_btn = discord.ui.Button(label="Назад", style=discord.ButtonStyle.danger)
+        # Кнопка обновления (на всякий случай)
+        refresh_btn = discord.ui.Button(label="🔄 Обновить", style=discord.ButtonStyle.secondary)
+        refresh_btn.callback = self.refresh_callback
+        self.add_item(refresh_btn)
+
+        # Кнопка назад (останавливает обновление)
+        back_btn = discord.ui.Button(label="◀ Назад", style=discord.ButtonStyle.danger)
         back_btn.callback = self.back_callback
         self.add_item(back_btn)
         conn.close()
+
+    def start_updating(self, message: discord.Message):
+        """Запускает задачу, обновляющую сообщение каждую секунду"""
+        self.message = message
+        # Останавливаем предыдущую задачу, если была
+        if self.update_task and not self.update_task.done():
+            self.update_task.cancel()
+        # Запускаем новую
+        self.update_task = asyncio.create_task(self.auto_update())
+
+    async def auto_update(self):
+        """Фоновая задача: обновляет кнопки каждую секунду, пока сообщение не будет удалено или таймеры не обнулятся"""
+        try:
+            while True:
+                await asyncio.sleep(1)
+                if self.message is None:
+                    break
+                # Проверяем, не истекли ли все таймеры
+                now = time.time()
+                any_active = False
+                conn = get_conn()
+                cur = conn.cursor()
+                cur.execute("SELECT building_type, build_end_time FROM buildings WHERE country_id=? AND build_end_time > ?",
+                            (self.country_id, now))
+                active_rows = cur.fetchall()
+                conn.close()
+                if active_rows:
+                    any_active = True
+                if not any_active:
+                    # Если все строительства завершены, можно остановить автообновление
+                    self.stop_updating()
+                # Пересоздаём кнопки
+                self.add_buttons()
+                try:
+                    await self.message.edit(view=self)
+                except discord.NotFound:
+                    break
+                except discord.HTTPException:
+                    pass  # игнорируем случайные ошибки
+        except asyncio.CancelledError:
+            pass
+
+    def stop_updating(self):
+        if self.update_task and not self.update_task.done():
+            self.update_task.cancel()
+
+    async def refresh_callback(self, interaction: discord.Interaction):
+        """Ручное обновление (на всякий случай)"""
+        self.add_buttons()
+        await interaction.response.edit_message(view=self)
+        # Если пользователь обновил вручную, можно перезапустить автообновление
+        self.start_updating(interaction.message)
+
+    async def back_callback(self, interaction: discord.Interaction):
+        self.stop_updating()
+        await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
 
     def make_callback(self, building_type):
         async def callback(interaction: discord.Interaction):
@@ -132,7 +194,7 @@ class BuildingsView(discord.ui.View):
             cur = conn.cursor()
             now = time.time()
 
-            # Проверяем, не идёт ли уже строительство
+            # Проверка на идущее строительство
             cur.execute("SELECT level, build_end_time FROM buildings WHERE country_id=? AND building_type=?",
                         (self.country_id, building_type))
             row = cur.fetchone()
@@ -148,9 +210,7 @@ class BuildingsView(discord.ui.View):
                 conn.close()
                 return
 
-            # Стоимость
             cost = get_build_cost(building_type, current_level)
-            # Проверяем ресурсы
             for res, amount in cost.items():
                 cur.execute("SELECT amount FROM resources WHERE country_id=? AND resource_name=?",
                             (self.country_id, res))
@@ -165,12 +225,12 @@ class BuildingsView(discord.ui.View):
                 cur.execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?",
                             (amount, self.country_id, res))
 
-            # Устанавливаем время окончания
             build_time = get_build_time(building_type, current_level)
             end_time = now + build_time
 
             if row:
-                cur.execute("UPDATE buildings SET build_end_time=? WHERE id=row['id']", (end_time,))
+                cur.execute("UPDATE buildings SET build_end_time=? WHERE country_id=? AND building_type=?",
+                            (end_time, self.country_id, building_type))
             else:
                 cur.execute("INSERT INTO buildings (country_id, building_type, level, build_end_time) VALUES (?, ?, ?, ?)",
                             (self.country_id, building_type, current_level, end_time))
@@ -178,14 +238,12 @@ class BuildingsView(discord.ui.View):
             conn.commit()
             conn.close()
 
-            # Обновляем сообщение
-            self.update_buttons()
-            await interaction.response.edit_message(content="Строительство начато!", view=self)
+            # Обновляем сообщение и перезапускаем таймер
+            self.add_buttons()
+            await interaction.response.edit_message(view=self)
+            self.start_updating(interaction.message)  # обновим задачу на новое сообщение
 
         return callback
-
-    async def back_callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
 
 class DiplomacyView(discord.ui.View):
     def __init__(self, country_id):
