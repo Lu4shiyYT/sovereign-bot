@@ -689,11 +689,26 @@ class Game(commands.Cog):
     @app_commands.describe(member="Игрок (оставьте пустым для своей статистики)")
     async def stats(self, interaction: discord.Interaction, member: discord.Member = None):
         target_user = member or interaction.user
+
+        # Сначала просто покажем, какой ID ищем (временная диагностика)
         country = await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (target_user.id,))
         if not country:
-            await interaction.response.send_message("Этот игрок не управляет страной.", ephemeral=True)
+            # Попробуем найти через подстроку (вдруг owner_id сохранился как текст)
+            country = await async_fetch_one("SELECT * FROM countries WHERE CAST(owner_id AS TEXT)=?", (str(target_user.id),))
+
+        if not country:
+            # Если всё равно не нашли – выведем диагностику
+            all_owners = await async_fetch_all("SELECT id, name, owner_id FROM countries WHERE owner_id IS NOT NULL")
+            owner_list = "\n".join([f"{c['name']}: owner_id={c['owner_id']} (type: {type(c['owner_id']).__name__})" for c in all_owners])
+            await interaction.response.send_message(
+                f"Не удалось найти страну для вашего ID ({target_user.id}).\n"
+                f"Все владельцы в базе:\n{owner_list}",
+                ephemeral=True
+            )
             return
+
         country = dict(country)
+        # Временная проверка: является ли текущий пользователь союзником? (упростим)
         is_ally = (interaction.user.id == target_user.id) or interaction.user.guild_permissions.administrator
         view = StatsView(country, is_ally, target_user)
         name = country['display_name'] or country['name']
