@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from database import async_fetch_all, async_fetch_one, async_execute
+from database import get_conn
 from data.countries import initial_countries, initial_provinces
 import os
 
@@ -14,44 +14,44 @@ class Admin(commands.Cog):
     @app_commands.command(name="init_game", description="Инициализировать игру (админ)")
     @app_commands.default_permissions(administrator=True)
     async def init_game(self, interaction: discord.Interaction):
+        conn = get_conn()
+        cur = conn.cursor()
         # Очистка старых данных
-        await async_execute("DELETE FROM wars")
-        await async_execute("DELETE FROM alliance_members")
-        await async_execute("DELETE FROM alliances")
-        await async_execute("DELETE FROM pacts")
-        await async_execute("DELETE FROM sanctions")
-        await async_execute("DELETE FROM resources")
-        await async_execute("DELETE FROM buildings")
-        await async_execute("DELETE FROM provinces")
-        await async_execute("DELETE FROM technologies")
-        await async_execute("DELETE FROM countries")
-
+        cur.execute("DELETE FROM wars")
+        cur.execute("DELETE FROM alliance_members")
+        cur.execute("DELETE FROM alliances")
+        cur.execute("DELETE FROM pacts")
+        cur.execute("DELETE FROM sanctions")
+        cur.execute("DELETE FROM resources")
+        cur.execute("DELETE FROM buildings")
+        cur.execute("DELETE FROM provinces")
+        cur.execute("DELETE FROM technologies")
+        cur.execute("DELETE FROM countries")
         for country_data in initial_countries:
-            row = await async_fetch_one(
-                "INSERT INTO countries (name, type, owner_id, display_name, aggression_score) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            cur.execute(
+                "INSERT INTO countries (name, type, owner_id, display_name, aggression_score) VALUES (?, ?, ?, ?, ?)",
                 (country_data['name'], country_data['type'], None, country_data['name'], 50)
             )
-            country_id = row['id']
+            country_id = cur.lastrowid
             provinces = initial_provinces.get(country_data['name'], [country_data['name']])
             for pname in provinces:
-                await async_execute(
-                    "INSERT INTO provinces (name, country_id) VALUES ($1, $2)",
-                    (pname, country_id)
-                )
+                cur.execute("INSERT INTO provinces (name, country_id) VALUES (?, ?)", (pname, country_id))
             resources_list = ['Нефть', 'Природный газ', 'Уголь', 'Железная руда', 'Продовольствие', 'Древесина', 'Пресная вода']
             for res in resources_list:
-                await async_execute(
-                    "INSERT INTO resources (country_id, resource_name, amount) VALUES ($1, $2, $3) ON CONFLICT (country_id, resource_name) DO UPDATE SET amount = $3",
+                cur.execute(
+                    "INSERT OR IGNORE INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?)",
                     (country_id, res, 1000)
                 )
             branches = ['Военная доктрина', 'Вооружение и техника', 'Авиация и космос', 'Флот', 'Информационные технологии',
                         'Медицина и биотехнологии', 'Энергетика', 'Промышленность', 'Сельское хозяйство', 'Транспорт и логистика',
                         'Гражданское строительство', 'Финансы и экономика']
             for branch in branches:
-                await async_execute(
-                    "INSERT INTO technologies (country_id, branch, level) VALUES ($1, $2, 0) ON CONFLICT (country_id, branch) DO UPDATE SET level = 0",
+                cur.execute(
+                    "INSERT OR IGNORE INTO technologies (country_id, branch, level) VALUES (?, ?, 0)",
                     (country_id, branch)
                 )
+        conn.commit()
+        conn.close()
         await interaction.response.send_message("Игра инициализирована! Все страны созданы.", ephemeral=True)
 
     @app_commands.command(name="set_host", description="Назначить ведущего")
@@ -81,7 +81,6 @@ class Admin(commands.Cog):
             await interaction.response.send_message("Пожалуйста, прикрепите файл с расширением .db (sovereign.db).", ephemeral=True)
             return
 
-        # Сохраняем загруженный файл поверх текущей базы
         try:
             await file.save(DB_PATH)
             await interaction.response.send_message("База данных восстановлена! Прогресс загружен.", ephemeral=True)
