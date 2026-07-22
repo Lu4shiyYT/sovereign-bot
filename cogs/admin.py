@@ -16,7 +16,6 @@ class Admin(commands.Cog):
     async def init_game(self, interaction: discord.Interaction):
         conn = get_conn()
         cur = conn.cursor()
-        # Очистка старых данных
         cur.execute("DELETE FROM wars")
         cur.execute("DELETE FROM alliance_members")
         cur.execute("DELETE FROM alliances")
@@ -27,6 +26,7 @@ class Admin(commands.Cog):
         cur.execute("DELETE FROM provinces")
         cur.execute("DELETE FROM technologies")
         cur.execute("DELETE FROM countries")
+
         for country_data in initial_countries:
             cur.execute(
                 "INSERT INTO countries (name, type, owner_id, display_name, aggression_score) VALUES (?, ?, ?, ?, ?)",
@@ -59,7 +59,6 @@ class Admin(commands.Cog):
     async def set_host(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.send_message(f"{member.mention} теперь ведущий.", ephemeral=True)
 
-    # ---------- БЭКАП ----------
     @app_commands.command(name="backup", description="Сохранить базу данных (файл)")
     @app_commands.default_permissions(administrator=True)
     async def backup(self, interaction: discord.Interaction):
@@ -73,14 +72,12 @@ class Admin(commands.Cog):
         except discord.Forbidden:
             await interaction.response.send_message("Не могу отправить вам личное сообщение. Убедитесь, что у вас открыты ЛС.", ephemeral=True)
 
-    # ---------- ВОССТАНОВЛЕНИЕ ----------
     @app_commands.command(name="restore", description="Восстановить базу данных (прикрепите файл sovereign.db)")
     @app_commands.default_permissions(administrator=True)
     async def restore(self, interaction: discord.Interaction, file: discord.Attachment):
         if not file.filename.endswith(".db"):
             await interaction.response.send_message("Пожалуйста, прикрепите файл с расширением .db (sovereign.db).", ephemeral=True)
             return
-
         try:
             await file.save(DB_PATH)
             await interaction.response.send_message("База данных восстановлена! Прогресс загружен.", ephemeral=True)
