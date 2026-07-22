@@ -862,6 +862,8 @@ class Game(commands.Cog):
 
     @app_commands.command(name="impose_sanction", description="Наложить санкции с выбором типа")
     @app_commands.describe(target="Страна (игрок)", sanction_type="Тип санкции", description="Описание (необязательно)")
+    @app_commands.command(name="impose_sanction", description="Наложить санкции с выбором типа")
+    @app_commands.describe(target="Страна (игрок)", sanction_type="Тип санкции", description="Описание (необязательно)")
     async def impose_sanction(self, interaction: discord.Interaction, target: discord.Member, sanction_type: str, description: str = ""):
         if sanction_type not in SANCTION_TYPES:
             await interaction.response.send_message(f"Неизвестный тип санкции. Доступные: {', '.join(SANCTION_TYPES.keys())}", ephemeral=True)
@@ -880,18 +882,17 @@ class Game(commands.Cog):
         amount = stype['amount']
         desc = stype['desc'] if not description else description
 
-        # Применяем эффект
+        # Безопасная вставка имени столбца (проверено, что param есть в словаре)
         await async_execute(
-            f"UPDATE countries SET {param} = {param} - ? WHERE id=?",
+            f'UPDATE countries SET "{param}" = "{param}" - ? WHERE id=?',
             (amount, target_country['id'])
         )
 
-        # Сохраняем санкцию
         await async_execute(
             "INSERT INTO sanctions (from_country, to_country, description, sanction_type, affected_param, effect_amount) VALUES (?, ?, ?, ?, ?, ?)",
             (my_country['id'], target_country['id'], desc, sanction_type, param, amount)
         )
-        await interaction.response.send_message(f"Санкция '{desc}' наложена на {target_country['name']}. ({param} снижен на {amount})", ephemeral=True)
+        await interaction.response.send_message(f"Санкция '{desc}' наложена на {target_country['name']}.", ephemeral=True)
 
     @app_commands.command(name="lift_sanction", description="Снять санкцию по ID (посмотреть ID через кнопку 'Мои санкции')")
     @app_commands.describe(sanction_id="ID санкции для снятия")
@@ -908,13 +909,13 @@ class Game(commands.Cog):
             await interaction.response.send_message("Санкция с таким ID не найдена или вы не её инициатор.", ephemeral=True)
             return
 
-        # Возвращаем эффект
+        # Восстановление параметра
         await async_execute(
-            f"UPDATE countries SET {sanction['affected_param']} = {sanction['affected_param']} + ? WHERE id=?",
+            f'UPDATE countries SET "{sanction["affected_param"]}" = "{sanction["affected_param"]}" + ? WHERE id=?',
             (sanction['effect_amount'], sanction['to_country'])
         )
         await async_execute("DELETE FROM sanctions WHERE id=?", (sanction_id,))
-        await interaction.response.send_message(f"Санкция ID {sanction_id} снята. Параметр {sanction['affected_param']} восстановлен на {sanction['effect_amount']}.", ephemeral=True)
+        await interaction.response.send_message(f"Санкция ID {sanction_id} снята.", ephemeral=True)
 
     @app_commands.command(name="list_sanctions", description="Показать все ваши исходящие санкции")
     async def list_sanctions(self, interaction: discord.Interaction):
