@@ -55,7 +55,6 @@ def get_conn():
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-    # таблицы (создаются, если нет)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS countries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,7 +84,6 @@ def init_db():
             aggression_score REAL DEFAULT 50
         )
     """)
-    # Добавляем колонки, если их нет (старые базы)
     new_columns = {
         'ruler_name': 'TEXT DEFAULT ""',
         'display_name': 'TEXT DEFAULT ""',
@@ -161,7 +159,6 @@ def init_db():
             FOREIGN KEY (to_country) REFERENCES countries(id)
         )
     """)
-    # Добавляем колонку subtype для старых версий
     try:
         cur.execute("ALTER TABLE pacts ADD COLUMN subtype TEXT DEFAULT ''")
     except sqlite3.OperationalError:
@@ -172,15 +169,14 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             from_country INTEGER,
             to_country INTEGER,
-            description TEXT,
             sanction_type TEXT DEFAULT '',
+            description TEXT DEFAULT '',
             affected_param TEXT DEFAULT '',
             effect_amount REAL DEFAULT 0,
             FOREIGN KEY (from_country) REFERENCES countries(id),
             FOREIGN KEY (to_country) REFERENCES countries(id)
         )
     """)
-    # Добавляем новые колонки для санкций
     try:
         cur.execute("ALTER TABLE sanctions ADD COLUMN sanction_type TEXT DEFAULT ''")
     except sqlite3.OperationalError:
