@@ -8,7 +8,6 @@ class War(commands.Cog):
 
     @app_commands.command(name="declare_war", description="Объявить войну")
     async def declare_war(self, interaction: discord.Interaction, target_country: str):
-        # Упрощённая логика
         await interaction.response.send_message(f"Война объявлена стране {target_country}!")
 
 async def setup(bot):
