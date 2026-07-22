@@ -55,6 +55,7 @@ def get_conn():
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
+    # Таблицы
     cur.execute("""
         CREATE TABLE IF NOT EXISTS countries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,6 +148,7 @@ def init_db():
             FOREIGN KEY (defender_id) REFERENCES countries(id)
         )
     """)
+    # pacts создаётся с subtype сразу
     cur.execute("""
         CREATE TABLE IF NOT EXISTS pacts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,11 +161,6 @@ def init_db():
             FOREIGN KEY (to_country) REFERENCES countries(id)
         )
     """)
-    try:
-        cur.execute("ALTER TABLE pacts ADD COLUMN subtype TEXT DEFAULT ''")
-    except sqlite3.OperationalError:
-        pass
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS sanctions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -177,18 +174,12 @@ def init_db():
             FOREIGN KEY (to_country) REFERENCES countries(id)
         )
     """)
-    try:
-        cur.execute("ALTER TABLE sanctions ADD COLUMN sanction_type TEXT DEFAULT ''")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cur.execute("ALTER TABLE sanctions ADD COLUMN affected_param TEXT DEFAULT ''")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cur.execute("ALTER TABLE sanctions ADD COLUMN effect_amount REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
+    # Добавим колонки sanctions, если их нет
+    for col, col_def in [('sanction_type', 'TEXT DEFAULT ""'), ('affected_param', 'TEXT DEFAULT ""'), ('effect_amount', 'REAL DEFAULT 0')]:
+        try:
+            cur.execute(f"ALTER TABLE sanctions ADD COLUMN {col} {col_def}")
+        except sqlite3.OperationalError:
+            pass
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS alliances (
@@ -209,7 +200,7 @@ def init_db():
         )
     """)
 
-    # ---------- ИНДЕКСЫ ДЛЯ БЫСТРЫХ ЗАПРОСОВ ----------
+    # Индексы для скорости
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_attacker ON wars(attacker_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_defender ON wars(defender_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_pacts_from ON pacts(from_country)")
