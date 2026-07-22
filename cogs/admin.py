@@ -17,24 +17,22 @@ class Admin(commands.Cog):
         conn = get_conn()
         cur = conn.cursor()
 
-        # Уничтожаем все таблицы, чтобы гарантированно получить чистую структуру
         tables = ["wars", "alliance_members", "alliances", "sanctions", "pacts",
                   "resources", "buildings", "provinces", "technologies", "countries"]
         for table in tables:
             cur.execute(f"DROP TABLE IF EXISTS {table}")
 
-        # Создаём всё заново с помощью init_db (правильная структура из database.py)
         conn.commit()
         conn.close()
-        init_db()
+        init_db()  # создаст таблицы с новыми полями population, army_count
 
-        # Заполняем страны
         conn = get_conn()
         cur = conn.cursor()
         for country_data in initial_countries:
+            # Добавляем population в запрос
             cur.execute(
-                "INSERT INTO countries (name, type, owner_id, display_name, aggression_score) VALUES (?, ?, ?, ?, ?)",
-                (country_data['name'], country_data['type'], None, country_data['name'], 50)
+                "INSERT INTO countries (name, type, owner_id, display_name, aggression_score, population) VALUES (?, ?, ?, ?, ?, ?)",
+                (country_data['name'], country_data['type'], None, country_data['name'], 50, country_data['population'])
             )
             country_id = cur.lastrowid
             provinces = initial_provinces.get(country_data['name'], [country_data['name']])
@@ -58,11 +56,7 @@ class Admin(commands.Cog):
         conn.close()
         await interaction.response.send_message("Игра инициализирована! Все страны созданы, база пересоздана.", ephemeral=True)
 
-    @app_commands.command(name="set_host", description="Назначить ведущего")
-    @app_commands.default_permissions(administrator=True)
-    async def set_host(self, interaction: discord.Interaction, member: discord.Member):
-        await interaction.response.send_message(f"{member.mention} теперь ведущий.", ephemeral=True)
-
+    # ... остальные команды (backup, restore) без изменений
     @app_commands.command(name="backup", description="Сохранить базу данных (файл)")
     @app_commands.default_permissions(administrator=True)
     async def backup(self, interaction: discord.Interaction):
