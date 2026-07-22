@@ -6,7 +6,7 @@ from database import init_db, async_fetch_all, async_execute
 import datetime
 
 # --- Настройки ---
-TOKEN = "MTUyOTIzNTQ0MDgxNTgzNzIxNQ.GxXvhD.eADMjUSEYyd4LQWL_hyQgPpiIARtLlR37AZcNQ"  # Замените на ваш реальный токен
+TOKEN = "MTUyOTIzNTQ0MDgxNTgzNzIxNQ.GuA9-m.yGTCujy8y5cuu8S4lx2AvMGQrMSMFtg43aGOXg"  # Замените на ваш реальный токен
 PREFIX = "/"
 
 intents = discord.Intents.default()
