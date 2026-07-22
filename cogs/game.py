@@ -96,7 +96,6 @@ class StatsView(discord.ui.View):
         self.target_user = target_user
 
     async def build_section(self, section: str) -> str:
-        """Возвращает текст для выбранного раздела."""
         country = self.country
         name = country['display_name'] or country['name']
         ruler = country['ruler_name'] or "Неизвестный"
@@ -112,16 +111,23 @@ class StatsView(discord.ui.View):
             else:
                 return f"{emoji} {title}: {value}{suffix}\n"
 
-        # Общий заголовок раздела (ник + флаг + страна)
-        header = f"**// {section.replace('_', ' ').title()}**\n{nick} | {flag_emoji} {name}\n\n"
+        # Базовая строка с ником и флагом (без заголовка раздела)
+        header = f"{nick} | {flag_emoji} {name}\n\n"
 
         content = ""
         if section == "main":
-            content += f"{EMOJI['budget']} Бюджет: {format_number(await self._get_budget(), 2)}$\n"
+            content += header
+            budget_row = await async_fetch_one(
+                "SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'",
+                (country['id'],)
+            )
+            budget_val = budget_row['amount'] if budget_row else 0
+            content += f"{EMOJI['budget']} Бюджет: {format_number(budget_val, 2)}$\n"
             content += f"{EMOJI['population']} Население: {format_number(0)} человек\n"
             content += f"{EMOJI['support']} Рейтинг поддержки правительства: {int(country['citizen_mood'])}\n"
 
         elif section == "development":
+            content += header
             eco = country['economic_stability']
             health = country['health']
             ind = country['industry_level']
@@ -141,16 +147,17 @@ class StatsView(discord.ui.View):
             content += param_line(EMOJI['mood'], "Настрой граждан", mood)
             content += param_line(EMOJI['crime'], "Преступность", crime)
             content += param_line(EMOJI['ecology'], "Экология", eco_val)
-            content += f"{EMOJI['gov_eff']} Эффективность правительства: ур. {gov_eff} (максимум 100)\n"
+            content += f"{EMOJI['gov_eff']} Эффективность правительства: ур. {gov_eff}\n"
             if self.is_ally:
-                content += f"{EMOJI['info_sec']} Информационная безопасность: ур. {info_sec} (максимум 20)\n"
-                content += f"{EMOJI['counter_int']} Контрразведка: ур. {cnt_int} (максимум 20)\n"
+                content += f"{EMOJI['info_sec']} Информационная безопасность: ур. {info_sec}\n"
+                content += f"{EMOJI['counter_int']} Контрразведка: ур. {cnt_int}\n"
             else:
                 content += f"{EMOJI['info_sec']} Информационная безопасность: неизвестно\n"
                 content += f"{EMOJI['counter_int']} Контрразведка: неизвестно\n"
             content += f"{EMOJI['growth']} Демографический рост: {growth:.2f}% (в год)\n"
 
         elif section == "international":
+            content += header
             aggr_text, aggr_circle = get_aggression_text(country['aggression_score'])
             content += f"{EMOJI['aggression']} Агрессия государства: {aggr_circle} {aggr_text}\n"
             prest_text, prest_circle = get_prestige_text(country['international_prestige'])
@@ -166,6 +173,7 @@ class StatsView(discord.ui.View):
             content += f"{EMOJI['sanction']} Санкции: нет\n"
 
         elif section == "territory":
+            content += header
             content += f"{EMOJI['colony']} Колонии: нет\n"
             provs = await async_fetch_all("SELECT name FROM provinces WHERE country_id=?", (country['id'],))
             if provs:
@@ -175,6 +183,7 @@ class StatsView(discord.ui.View):
                 content += f"{EMOJI['territory']} Регионы: нет\n"
 
         elif section == "buildings_info":
+            content += header
             builds = await async_fetch_all(
                 "SELECT building_type, level FROM buildings WHERE country_id=? AND build_end_time=0 AND level>0",
                 (country['id'],)
@@ -195,6 +204,7 @@ class StatsView(discord.ui.View):
                 content += f"{EMOJI['buildings_icon']} Постройки: нет\n"
 
         elif section == "resources_info":
+            content += header
             res = await async_fetch_all("SELECT resource_name, amount FROM resources WHERE country_id=?", (country['id'],))
             if res:
                 for r in res:
@@ -203,6 +213,7 @@ class StatsView(discord.ui.View):
                 content += "Нет ресурсов\n"
 
         elif section == "army":
+            content += header
             content += param_line(EMOJI['army_strength'], "Сила армии", country['combat_capability'])
             content += f"{EMOJI['army_count']} Численность армии: {format_number(0)} человек\n"
             if self.is_ally:
@@ -214,14 +225,7 @@ class StatsView(discord.ui.View):
                 content += f"{EMOJI['weapon']} Вооружение: неизвестно\n"
                 content += f"{EMOJI['vehicle']} Военная техника: неизвестно\n"
 
-        return header + content
-
-    async def _get_budget(self):
-        row = await async_fetch_one(
-            "SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'",
-            (self.country['id'],)
-        )
-        return row['amount'] if row else 0
+        return content
 
     async def show_section(self, interaction: discord.Interaction, section: str):
         text = await self.build_section(section)
