@@ -22,8 +22,8 @@ class Admin(commands.Cog):
         cur.execute("DELETE FROM technologies")
         cur.execute("DELETE FROM countries")
         for country_data in initial_countries:
-            cur.execute("INSERT INTO countries (name, type, owner_id) VALUES (?, ?, ?)",
-                        (country_data['name'], country_data['type'], None))
+            cur.execute("INSERT INTO countries (name, type, owner_id, display_name, aggression_score) VALUES (?, ?, ?, ?, ?)",
+                        (country_data['name'], country_data['type'], None, country_data['name'], 50))
             country_id = cur.lastrowid
             provinces = initial_provinces.get(country_data['name'], [country_data['name']])
             for pname in provinces:
