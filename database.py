@@ -1,4 +1,5 @@
 import sqlite3
+import asyncio
 
 DB_PATH = "sovereign.db"
 
@@ -6,6 +7,39 @@ def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+async def async_get_conn():
+    return await asyncio.to_thread(get_conn)
+
+async def async_fetch_one(query, params=()):
+    conn = await async_get_conn()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+async def async_fetch_all(query, params=()):
+    conn = await async_get_conn()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+async def async_execute(query, params=()):
+    conn = await async_get_conn()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    conn.commit()
+    conn.close()
+
+async def async_execute_many(query, params_list):
+    conn = await async_get_conn()
+    cur = conn.cursor()
+    cur.executemany(query, params_list)
+    conn.commit()
+    conn.close()
 
 def init_db():
     conn = get_conn()
