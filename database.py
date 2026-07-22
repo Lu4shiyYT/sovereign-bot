@@ -55,7 +55,6 @@ def get_conn():
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-    # Таблицы
     cur.execute("""
         CREATE TABLE IF NOT EXISTS countries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,7 +147,6 @@ def init_db():
             FOREIGN KEY (defender_id) REFERENCES countries(id)
         )
     """)
-    # pacts создаётся с subtype сразу
     cur.execute("""
         CREATE TABLE IF NOT EXISTS pacts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,7 +172,6 @@ def init_db():
             FOREIGN KEY (to_country) REFERENCES countries(id)
         )
     """)
-    # Добавим колонки sanctions, если их нет
     for col, col_def in [('sanction_type', 'TEXT DEFAULT ""'), ('affected_param', 'TEXT DEFAULT ""'), ('effect_amount', 'REAL DEFAULT 0')]:
         try:
             cur.execute(f"ALTER TABLE sanctions ADD COLUMN {col} {col_def}")
@@ -200,7 +197,7 @@ def init_db():
         )
     """)
 
-    # Индексы для скорости
+    # Индексы
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_attacker ON wars(attacker_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_defender ON wars(defender_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_pacts_from ON pacts(from_country)")
