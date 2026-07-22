@@ -11,7 +11,7 @@ import asyncio
 BUILDING_TYPES = {
     "Ферма": {
         "cost": {"Продовольствие": 50},
-        "build_time": 60,          # секунд
+        "build_time": 60,          # секунд (для теста)
         "upgrade_multiplier": 1.5,
         "produces": {"Продовольствие": 10}
     },
@@ -61,11 +61,10 @@ class GameMenu(discord.ui.View):
     @discord.ui.button(label="🏭 Постройки", style=discord.ButtonStyle.primary)
     async def buildings_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = BuildingsView(self.country_id)
-        # Сначала загружаем актуальные данные и создаём правильные кнопки
         await view.initialize_buttons()
         await interaction.response.edit_message(content="Меню построек", view=view)
-        # Запускаем таймер, если есть активные строительства
         if view.has_active_builds():
+            await interaction.channel.send("🔧 Автообновление запущено")  # диагностика
             view.start_updating(interaction.message)
 
     @discord.ui.button(label="💰 Ресурсы", style=discord.ButtonStyle.primary)
@@ -88,10 +87,9 @@ class BuildingsView(discord.ui.View):
         self.country_id = country_id
         self.message = None
         self.update_task = None
-        self.active = False   # есть ли активные стройки
+        self.active = False
 
     async def initialize_buttons(self):
-        """Асинхронно загружает данные и создаёт кнопки с актуальными подписями."""
         self.clear_items()
         now = time.time()
         self.active = False
@@ -102,6 +100,17 @@ class BuildingsView(discord.ui.View):
             )
             level = 0 if row is None else row['level']
             end_time = row['build_end_time'] if row else 0
+
+            # Проверяем, не завершилось ли строительство
+            if end_time > 0 and end_time <= now:
+                # Завершаем стройку: повышаем уровень, сбрасываем таймер
+                new_level = level + 1
+                await async_execute(
+                    "UPDATE buildings SET level=?, build_end_time=0 WHERE country_id=? AND building_type=?",
+                    (new_level, self.country_id, b_type)
+                )
+                level = new_level
+                end_time = 0
 
             if level >= 10:
                 label = f"{b_type} (макс.)"
@@ -138,10 +147,9 @@ class BuildingsView(discord.ui.View):
         self.update_task = asyncio.create_task(self.auto_update())
 
     async def auto_update(self):
-        """Фоновый цикл: сразу обновляет, потом каждую секунду проверяет таймеры."""
+        await self.message.channel.send("⏳ Цикл автообновления начат")  # диагностика
         try:
             while True:
-                # Сначала обновляем данные и перерисовываем кнопки
                 await self.refresh_data_and_buttons()
                 if self.message:
                     try:
@@ -149,21 +157,18 @@ class BuildingsView(discord.ui.View):
                     except discord.NotFound:
                         break
                     except discord.HTTPException as e:
-                        # временно выводим ошибку в канал, где было открыто меню
                         await self.message.channel.send(f"Ошибка обновления меню: {e}")
-                # Если больше нет активных строек — останавливаем автообновление
                 if not self.active:
+                    await self.message.channel.send("🛑 Автообновление остановлено (нет активных строек)")
                     break
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
-            pass
+            await self.message.channel.send("🛑 Автообновление отменено")
         except Exception as e:
-            if self.message:
-                await self.message.channel.send(f"Критическая ошибка автообновления: {e}")
+            await self.message.channel.send(f"Критическая ошибка автообновления: {e}")
             raise
 
     async def refresh_data_and_buttons(self):
-        """Загружает свежие данные из БД и обновляет надписи на кнопках."""
         now = time.time()
         self.active = False
         for child in self.children:
@@ -175,6 +180,16 @@ class BuildingsView(discord.ui.View):
                 )
                 level = 0 if row is None else row['level']
                 end_time = row['build_end_time'] if row else 0
+
+                # Завершение просроченной стройки
+                if end_time > 0 and end_time <= now:
+                    new_level = level + 1
+                    await async_execute(
+                        "UPDATE buildings SET level=?, build_end_time=0 WHERE country_id=? AND building_type=?",
+                        (new_level, self.country_id, b_type)
+                    )
+                    level = new_level
+                    end_time = 0
 
                 if level >= 10:
                     child.label = f"{b_type} (макс.)"
