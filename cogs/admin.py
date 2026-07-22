@@ -16,16 +16,34 @@ class Admin(commands.Cog):
     async def init_game(self, interaction: discord.Interaction):
         conn = get_conn()
         cur = conn.cursor()
+
+        # Очищаем всё
         cur.execute("DELETE FROM wars")
         cur.execute("DELETE FROM alliance_members")
         cur.execute("DELETE FROM alliances")
-        cur.execute("DELETE FROM pacts")
         cur.execute("DELETE FROM sanctions")
         cur.execute("DELETE FROM resources")
         cur.execute("DELETE FROM buildings")
         cur.execute("DELETE FROM provinces")
         cur.execute("DELETE FROM technologies")
         cur.execute("DELETE FROM countries")
+
+        # Пересоздаём таблицу pacts с колонкой subtype (устраняем проблему)
+        cur.execute("DROP TABLE IF EXISTS pacts")
+        cur.execute("""
+            CREATE TABLE pacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_country INTEGER,
+                to_country INTEGER,
+                type TEXT,
+                subtype TEXT DEFAULT '',
+                accepted INTEGER DEFAULT 0,
+                FOREIGN KEY (from_country) REFERENCES countries(id),
+                FOREIGN KEY (to_country) REFERENCES countries(id)
+            )
+        """)
+
+        # Заполняем страны
         for country_data in initial_countries:
             cur.execute(
                 "INSERT INTO countries (name, type, owner_id, display_name, aggression_score) VALUES (?, ?, ?, ?, ?)",
