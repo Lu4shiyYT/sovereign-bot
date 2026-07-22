@@ -2,44 +2,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from database import async_fetch_all, async_fetch_one, async_execute
+from data.buildings import BUILDING_TYPES
 import time
-import asyncio
-
-# ========================
-# ДАННЫЕ О ПОСТРОЙКАХ
-# ========================
-BUILDING_TYPES = {
-    "Ферма": {
-        "cost": {"Продовольствие": 50},
-        "build_time": 60,          # секунд (для теста)
-        "upgrade_multiplier": 1.5,
-        "produces": {"Продовольствие": 10}
-    },
-    "Шахта": {
-        "cost": {"Уголь": 100},
-        "build_time": 90,
-        "upgrade_multiplier": 1.8,
-        "produces": {"Уголь": 8, "Железная руда": 5}
-    },
-    "Бизнес-центр": {
-        "cost": {"Доллары": 200},
-        "build_time": 120,
-        "upgrade_multiplier": 2.0,
-        "produces": {"Доллары": 50}
-    },
-    "Казарма": {
-        "cost": {"Продовольствие": 150, "Доллары": 100},
-        "build_time": 150,
-        "upgrade_multiplier": 1.7,
-        "produces": {}
-    },
-    "Лаборатория": {
-        "cost": {"Доллары": 300, "Электроэнергия": 100},
-        "build_time": 200,
-        "upgrade_multiplier": 2.2,
-        "produces": {"Очки науки": 5}
-    }
-}
 
 def get_build_time(building_type, level):
     base = BUILDING_TYPES[building_type]["build_time"]
@@ -61,11 +25,8 @@ class GameMenu(discord.ui.View):
     @discord.ui.button(label="🏭 Постройки", style=discord.ButtonStyle.primary)
     async def buildings_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = BuildingsView(self.country_id)
-        await view.initialize_buttons()
+        await view.refresh_buttons(interaction)
         await interaction.response.edit_message(content="Меню построек", view=view)
-        if view.has_active_builds():
-            await interaction.channel.send("🔧 Автообновление запущено")  # диагностика
-            view.start_updating(interaction.message)
 
     @discord.ui.button(label="💰 Ресурсы", style=discord.ButtonStyle.primary)
     async def resources_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -85,14 +46,11 @@ class BuildingsView(discord.ui.View):
     def __init__(self, country_id):
         super().__init__(timeout=None)
         self.country_id = country_id
-        self.message = None
-        self.update_task = None
-        self.active = False
 
-    async def initialize_buttons(self):
+    async def refresh_buttons(self, interaction):
+        """Загружает актуальные данные, завершает просроченные стройки и пересоздаёт кнопки."""
         self.clear_items()
         now = time.time()
-        self.active = False
         for b_type in BUILDING_TYPES:
             row = await async_fetch_one(
                 "SELECT level, build_end_time FROM buildings WHERE country_id=? AND building_type=?",
@@ -101,9 +59,8 @@ class BuildingsView(discord.ui.View):
             level = 0 if row is None else row['level']
             end_time = row['build_end_time'] if row else 0
 
-            # Проверяем, не завершилось ли строительство
+            # Автоматически завершаем строительство, если время вышло
             if end_time > 0 and end_time <= now:
-                # Завершаем стройку: повышаем уровень, сбрасываем таймер
                 new_level = level + 1
                 await async_execute(
                     "UPDATE buildings SET level=?, build_end_time=0 WHERE country_id=? AND building_type=?",
@@ -119,7 +76,6 @@ class BuildingsView(discord.ui.View):
                 remaining = int(end_time - now)
                 label = f"{b_type} (стр-во {remaining}с)"
                 disabled = True
-                self.active = True
             else:
                 next_level = level + 1
                 label = f"{b_type} (ур.{level} → {next_level})"
@@ -129,90 +85,22 @@ class BuildingsView(discord.ui.View):
             btn.callback = self.make_callback(b_type)
             self.add_item(btn)
 
+        # Кнопка «Обновить»
         refresh_btn = discord.ui.Button(label="🔄 Обновить", style=discord.ButtonStyle.secondary)
         refresh_btn.callback = self.refresh_callback
         self.add_item(refresh_btn)
 
+        # Кнопка «Назад»
         back_btn = discord.ui.Button(label="◀ Назад", style=discord.ButtonStyle.danger)
         back_btn.callback = self.back_callback
         self.add_item(back_btn)
 
-    def has_active_builds(self):
-        return self.active
-
-    def start_updating(self, message: discord.Message):
-        self.message = message
-        if self.update_task and not self.update_task.done():
-            self.update_task.cancel()
-        self.update_task = asyncio.create_task(self.auto_update())
-
-    async def auto_update(self):
-        await self.message.channel.send("⏳ Цикл автообновления начат")  # диагностика
-        try:
-            while True:
-                await self.refresh_data_and_buttons()
-                if self.message:
-                    try:
-                        await self.message.edit(view=self)
-                    except discord.NotFound:
-                        break
-                    except discord.HTTPException as e:
-                        await self.message.channel.send(f"Ошибка обновления меню: {e}")
-                if not self.active:
-                    await self.message.channel.send("🛑 Автообновление остановлено (нет активных строек)")
-                    break
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            await self.message.channel.send("🛑 Автообновление отменено")
-        except Exception as e:
-            await self.message.channel.send(f"Критическая ошибка автообновления: {e}")
-            raise
-
-    async def refresh_data_and_buttons(self):
-        now = time.time()
-        self.active = False
-        for child in self.children:
-            if isinstance(child, discord.ui.Button) and child.custom_id in BUILDING_TYPES:
-                b_type = child.custom_id
-                row = await async_fetch_one(
-                    "SELECT level, build_end_time FROM buildings WHERE country_id=? AND building_type=?",
-                    (self.country_id, b_type)
-                )
-                level = 0 if row is None else row['level']
-                end_time = row['build_end_time'] if row else 0
-
-                # Завершение просроченной стройки
-                if end_time > 0 and end_time <= now:
-                    new_level = level + 1
-                    await async_execute(
-                        "UPDATE buildings SET level=?, build_end_time=0 WHERE country_id=? AND building_type=?",
-                        (new_level, self.country_id, b_type)
-                    )
-                    level = new_level
-                    end_time = 0
-
-                if level >= 10:
-                    child.label = f"{b_type} (макс.)"
-                    child.disabled = True
-                elif end_time > now:
-                    remaining = int(end_time - now)
-                    child.label = f"{b_type} (стр-во {remaining}с)"
-                    child.disabled = True
-                    self.active = True
-                else:
-                    next_level = level + 1
-                    child.label = f"{b_type} (ур.{level} → {next_level})"
-                    child.disabled = False
-
     async def refresh_callback(self, interaction: discord.Interaction):
-        await self.refresh_data_and_buttons()
+        """Ручное обновление — перезагружает кнопки с актуальными таймерами."""
+        await self.refresh_buttons(interaction)
         await interaction.response.edit_message(view=self)
-        if self.has_active_builds():
-            self.start_updating(interaction.message)
 
     async def back_callback(self, interaction: discord.Interaction):
-        if self.update_task and not self.update_task.done():
-            self.update_task.cancel()
         await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
 
     def make_callback(self, building_type):
@@ -262,10 +150,8 @@ class BuildingsView(discord.ui.View):
                     (self.country_id, building_type, current_level, end_time)
                 )
 
-            await self.refresh_data_and_buttons()
+            await self.refresh_buttons(interaction)
             await interaction.response.edit_message(view=self)
-            if self.has_active_builds():
-                self.start_updating(interaction.message)
 
         return callback
 
@@ -331,6 +217,76 @@ class Game(commands.Cog):
             return
         country_id = row['id']
         await interaction.response.send_message("Главное меню", view=GameMenu(country_id), ephemeral=True)
+
+    # ---- ЕЖЕДНЕВНЫЙ БОНУС ----
+    @app_commands.command(name="daily", description="Получить ежедневный бонус ресурсов")
+    async def daily(self, interaction: discord.Interaction):
+        row = await async_fetch_one("SELECT id, last_daily FROM countries WHERE owner_id=?", (interaction.user.id,))
+        if not row:
+            await interaction.response.send_message("Сначала выберите страну через `/country_choose`.", ephemeral=True)
+            return
+        country_id = row['id']
+        last_daily = row['last_daily']
+        now = time.time()
+        if last_daily and (now - last_daily) < 86400:
+            remaining = int(86400 - (now - last_daily))
+            hours = remaining // 3600
+            minutes = (remaining % 3600) // 60
+            await interaction.response.send_message(
+                f"Вы уже забирали бонус. Следующий доступен через {hours} ч {minutes} мин.",
+                ephemeral=True
+            )
+            return
+        # Выдача бонуса
+        bonus = {"Доллары": 500, "Продовольствие": 200, "Нефть": 100}
+        for res, amount in bonus.items():
+            await async_execute(
+                "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) "
+                "ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+                (country_id, res, amount, amount)
+            )
+        # Обновляем время последнего бонуса
+        await async_execute("UPDATE countries SET last_daily = ? WHERE id = ?", (now, country_id))
+        await interaction.response.send_message(
+            "Ежедневный бонус получен! +500 Долларов, +200 Продовольствия, +100 Нефти.",
+            ephemeral=True
+        )
+
+    # ---- СТАТИСТИКА СТРАНЫ ----
+    @app_commands.command(name="stats", description="Просмотреть статистику вашей страны")
+    async def stats(self, interaction: discord.Interaction):
+        country = await async_fetch_one(
+            "SELECT * FROM countries WHERE owner_id=?",
+            (interaction.user.id,)
+        )
+        if not country:
+            await interaction.response.send_message("Сначала выберите страну.", ephemeral=True)
+            return
+        country = dict(country)
+        # Постройки
+        builds = await async_fetch_all(
+            "SELECT building_type, level FROM buildings WHERE country_id=? AND build_end_time=0",
+            (country['id'],)
+        )
+        build_text = "\n".join([f"{b['building_type']}: ур.{b['level']}" for b in builds]) or "Нет построек"
+
+        text = f"**{country['name']}** ({country['type']})\n"
+        text += f"💰 Экономическая стабильность: {country['economic_stability']:.1f}%\n"
+        text += f"❤️ Здоровье населения: {country['health']:.1f}%\n"
+        text += f"⚔️ Боеспособность: {country['combat_capability']:.1f}%\n"
+        text += f"🏭 Промышленность: {country['industry_level']:.1f}%\n"
+        text += f"🔬 Научный прогресс: {country['science_progress']:.1f}%\n"
+        text += f"😊 Настрой граждан: {country['citizen_mood']:.1f}%\n"
+        text += f"🚨 Преступность: {country['crime_rate']:.1f}%\n"
+        text += f"🌿 Экология: {country['ecology']:.1f}%\n"
+        text += f"🌐 Международный авторитет: {country['international_prestige']:.1f}\n"
+        text += f"🏛️ Эффективность правительства: {country['government_efficiency']:.1f}%\n"
+        text += f"🔐 Инфо-безопасность: {country['info_security']:.1f}%\n"
+        text += f"🕵️ Контрразведка: {country['counter_intelligence']:.1f}%\n"
+        text += f"👥 Демографический рост: {country['demographic_growth']:.2f}%\n\n"
+        text += f"**Постройки:**\n{build_text}"
+
+        await interaction.response.send_message(text, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Game(bot))
