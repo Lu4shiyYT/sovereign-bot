@@ -4,7 +4,7 @@ from discord import app_commands
 from database import async_fetch_all, async_fetch_one, async_execute
 from data.buildings import BUILDING_TYPES
 import time
-import datetime  # добавлено для форматирования даты
+import datetime
 
 # ========================
 # КОНСТАНТЫ (эмодзи, словари)
@@ -58,7 +58,6 @@ SANCTION_TYPES = {
     "machinery_embargo": {"param": "industry_level", "amount": 3, "desc": "Эмбарго на оборудование"},
 }
 
-# Словарь для хранения приглашений в альянсы в памяти
 pending_alliance_invites = {}
 
 
@@ -134,7 +133,9 @@ class StatsView(discord.ui.View):
             )
             budget_val = budget_row['amount'] if budget_row else 0
             content += f"{EMOJI['budget']} Бюджет: {format_number(budget_val, 2)}$\n"
-            content += f"{EMOJI['population']} Население: {format_number(0)} человек\n"
+            # Население из БД
+            pop = country.get('population', 0)
+            content += f"{EMOJI['population']} Население: {format_number(pop)} человек\n"
             content += f"{EMOJI['support']} Рейтинг поддержки правительства: {int(country['citizen_mood'])}\n"
 
         elif section == "development":
@@ -267,9 +268,13 @@ class StatsView(discord.ui.View):
         elif section == "army":
             content += header
             content += param_line(EMOJI['army_strength'], "Сила армии", country['combat_capability'])
-            content += f"{EMOJI['army_count']} Численность армии: {format_number(0)} человек\n"
+            army_count = country.get('army_count', 0)
+            content += f"{EMOJI['army_count']} Численность армии: {format_number(army_count)} человек\n"
             if self.is_ally:
-                content += f"{EMOJI['reservists']} Военный резерв: {format_number(0)} человек\n"
+                # Резерв – пока упрощённо: часть населения, не в армии
+                population = country.get('population', 0)
+                reservists = max(0, population - army_count)
+                content += f"{EMOJI['reservists']} Военный резерв: {format_number(reservists)} человек\n"
                 content += f"{EMOJI['weapon']} Вооружение: нет\n"
                 content += f"{EMOJI['vehicle']} Военная техника: нет\n"
             else:
@@ -313,7 +318,7 @@ class StatsView(discord.ui.View):
 
 
 # ========================
-# VIEW: ПРИГЛАШЕНИЕ В АЛЬЯНС (КНОПКИ В ЛС)
+# VIEW: ПРИГЛАШЕНИЕ В АЛЬЯНС И ПАКТЫ (без изменений)
 # ========================
 class AllianceInviteView(discord.ui.View):
     def __init__(self, alliance_id, alliance_name, leader_country_id, target_user_id):
@@ -325,7 +330,6 @@ class AllianceInviteView(discord.ui.View):
 
     @discord.ui.button(label="Принять", style=discord.ButtonStyle.success)
     async def accept_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Проверяем, что кнопку нажал именно приглашённый
         if interaction.user.id != self.target_user_id:
             await interaction.response.send_message("Это приглашение не для вас.", ephemeral=True)
             return
@@ -335,13 +339,11 @@ class AllianceInviteView(discord.ui.View):
             await interaction.response.send_message("Приглашение больше не действительно.", ephemeral=True)
             return
 
-        # Проверяем страну игрока (теперь получаем и id, и name)
         target_country = await async_fetch_one("SELECT id, name FROM countries WHERE owner_id=?", (interaction.user.id,))
         if not target_country:
             await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
             return
 
-        # Проверка лимита альянсов
         member_count = await async_fetch_one("SELECT COUNT(*) as cnt FROM alliance_members WHERE country_id=?",
                                              (target_country['id'],))
         if member_count['cnt'] >= 5:
@@ -349,16 +351,13 @@ class AllianceInviteView(discord.ui.View):
                                                     ephemeral=True)
             return
 
-        # Добавляем в альянс
         await async_execute("INSERT INTO alliance_members (alliance_id, country_id) VALUES (?, ?)",
                             (self.alliance_id, target_country['id']))
-        # Настройка прав в канале альянса
         channel_id_row = await async_fetch_one("SELECT channel_id FROM alliances WHERE id=?", (self.alliance_id,))
         if channel_id_row:
             channel = interaction.client.get_channel(channel_id_row['channel_id'])
             if channel:
                 await channel.set_permissions(interaction.user, read_messages=True, send_messages=True)
-        # Уведомление лидеру (теперь с правильным названием страны)
         leader_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?",
                                                (self.leader_country_id,))
         if leader_country:
@@ -378,7 +377,6 @@ class AllianceInviteView(discord.ui.View):
             return
 
         invite = pending_alliance_invites.pop(self.target_user_id, None)
-        # Уведомление лидеру об отказе
         if invite:
             leader_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?", (invite[1],))
             if leader_country:
@@ -392,9 +390,6 @@ class AllianceInviteView(discord.ui.View):
         await interaction.response.edit_message(content="Вы отклонили приглашение в альянс.", view=None)
 
 
-# ========================
-# VIEW: ПРЕДЛОЖЕНИЕ ПАКТА (КНОПКИ В ЛС)
-# ========================
 class PactProposalView(discord.ui.View):
     def __init__(self, pact_id, target_user_id, from_country_id, pact_type, subtype):
         super().__init__(timeout=None)
@@ -434,7 +429,6 @@ class PactProposalView(discord.ui.View):
                 return
 
         await async_execute("UPDATE pacts SET accepted=1 WHERE id=?", (self.pact_id,))
-        # Уведомление инициатору
         from_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?", (self.from_country_id,))
         if from_country:
             initiator = interaction.client.get_user(from_country['owner_id'])
@@ -474,7 +468,7 @@ class PactProposalView(discord.ui.View):
 
 
 # ========================
-# VIEW: ГЛАВНОЕ МЕНЮ, ДИПЛОМАТИЯ, АЛЬЯНСЫ, ВОЙНА, ЗДАНИЯ
+# VIEW: МЕНЮШКИ (Добавлена кнопка "Армия")
 # ========================
 class DiplomacyView(discord.ui.View):
     def __init__(self, country_id):
@@ -596,12 +590,46 @@ class GameMenu(discord.ui.View):
     async def war_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Военные действия", view=WarMenuView(self.country_id))
 
+    @discord.ui.button(label="🛡️ Армия", style=discord.ButtonStyle.primary)
+    async def army_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="Управление армией", view=ArmyView(self.country_id))
+
     @discord.ui.button(label="🏛️ Управление", style=discord.ButtonStyle.success)
     async def gov_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Управление государством", view=GovernmentView(self.country_id))
 
 
+class ArmyView(discord.ui.View):
+    def __init__(self, country_id):
+        super().__init__(timeout=None)
+        self.country_id = country_id
+
+    @discord.ui.button(label="Рекрутировать", style=discord.ButtonStyle.success)
+    async def recruit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Используйте команду `/recruit <количество>`", ephemeral=True)
+
+    @discord.ui.button(label="Распустить", style=discord.ButtonStyle.danger)
+    async def disband_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Используйте команду `/disband <количество>`", ephemeral=True)
+
+    @discord.ui.button(label="Информация об армии", style=discord.ButtonStyle.secondary)
+    async def info_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        country = await async_fetch_one("SELECT * FROM countries WHERE id=?", (self.country_id,))
+        if not country:
+            await interaction.response.send_message("Ошибка.", ephemeral=True)
+            return
+        army = country['army_count']
+        pop = country['population']
+        content = f"**Армия**\nЧисленность: {format_number(army)}\nНаселение: {format_number(pop)}"
+        await interaction.response.edit_message(content=content, view=self)
+
+    @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
+
+
 class BuildingsView(discord.ui.View):
+    # ... (без изменений, как в предыдущей версии)
     def __init__(self, country_id):
         super().__init__(timeout=None)
         self.country_id = country_id
@@ -779,7 +807,6 @@ class Game(commands.Cog):
         return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
 
     async def _notify_user(self, user_id, message):
-        """Отправить ЛС пользователю, игнорируя ошибки"""
         user = self.bot.get_user(user_id)
         if user:
             try:
@@ -788,7 +815,6 @@ class Game(commands.Cog):
                 pass
 
     async def _notify_country_owner(self, country_id, message):
-        """Отправить ЛС владельцу страны по country_id"""
         country = await async_fetch_one("SELECT owner_id FROM countries WHERE id=?", (country_id,))
         if country and country['owner_id']:
             await self._notify_user(country['owner_id'], message)
@@ -882,6 +908,87 @@ class Game(commands.Cog):
         await interaction.response.send_message(header, view=view, ephemeral=True)
 
     # ========================
+    # АРМИЯ (НОВЫЕ КОМАНДЫ)
+    # ========================
+    @app_commands.command(name="army", description="Информация об армии")
+    async def army_info(self, interaction: discord.Interaction):
+        country = await self._get_country(interaction.user.id)
+        if not country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+        army = country['army_count']
+        pop = country['population']
+        content = f"**Армия**\nЧисленность: {format_number(army)}\nНаселение: {format_number(pop)}\n"
+        content += f"Сила армии: {country['combat_capability']}\n"
+        await interaction.response.send_message(content, ephemeral=True)
+
+    @app_commands.command(name="recruit", description="Нанять солдат в армию")
+    @app_commands.describe(amount="Количество новобранцев")
+    async def recruit(self, interaction: discord.Interaction, amount: int):
+        if amount <= 0:
+            await interaction.response.send_message("Укажите положительное число.", ephemeral=True)
+            return
+        country = await self._get_country(interaction.user.id)
+        if not country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+        # Проверка населения
+        if amount > country['population'] - country['army_count']:
+            await interaction.response.send_message("Недостаточно свободного населения.", ephemeral=True)
+            return
+        # Стоимость рекрута: базовая цена за 1 солдата в долларах и продовольствии
+        # При мобилизации скидка 50%
+        cost_money = 10 * amount  # 10 долларов за рекрута
+        cost_food = 5 * amount    # 5 продовольствия за рекрута
+        if country['mobilization']:
+            cost_money = cost_money // 2
+            cost_food = cost_food // 2
+
+        # Проверка ресурсов
+        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
+        if not money_row or money_row['amount'] < cost_money:
+            await interaction.response.send_message("Недостаточно денег.", ephemeral=True)
+            return
+        food_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Продовольствие'", (country['id'],))
+        if not food_row or food_row['amount'] < cost_food:
+            await interaction.response.send_message("Недостаточно продовольствия.", ephemeral=True)
+            return
+
+        # Списание ресурсов
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (cost_money, country['id']))
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (cost_food, country['id']))
+        # Увеличение армии
+        await async_execute("UPDATE countries SET army_count = army_count + ? WHERE id=?", (amount, country['id']))
+        # Обновление силы армии (простая формула: чем больше армия, тем выше сила)
+        # Пока так: сила = min(100, базовая + армия/100000)
+        new_army_count = country['army_count'] + amount
+        new_strength = min(100, country['combat_capability'] + amount / 10000)
+        await async_execute("UPDATE countries SET combat_capability = ? WHERE id=?", (new_strength, country['id']))
+
+        await interaction.response.send_message(f"Нанято {format_number(amount)} солдат. Новая численность армии: {format_number(new_army_count)}.", ephemeral=True)
+
+    @app_commands.command(name="disband", description="Распустить часть армии")
+    @app_commands.describe(amount="Сколько солдат уволить")
+    async def disband(self, interaction: discord.Interaction, amount: int):
+        if amount <= 0:
+            await interaction.response.send_message("Укажите положительное число.", ephemeral=True)
+            return
+        country = await self._get_country(interaction.user.id)
+        if not country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+        if amount > country['army_count']:
+            await interaction.response.send_message("Нельзя распустить больше, чем есть в армии.", ephemeral=True)
+            return
+        # Возвращаем часть ресурсов? Пока нет.
+        await async_execute("UPDATE countries SET army_count = army_count - ? WHERE id=?", (amount, country['id']))
+        new_army_count = country['army_count'] - amount
+        new_strength = max(1, country['combat_capability'] - amount / 10000)
+        await async_execute("UPDATE countries SET combat_capability = ? WHERE id=?", (new_strength, country['id']))
+        await interaction.response.send_message(f"Распущено {format_number(amount)} солдат. Новая численность: {format_number(new_army_count)}.", ephemeral=True)
+
+    # ... (остальные команды без изменений)
+    # ========================
     # ДИПЛОМАТИЯ
     # ========================
     @app_commands.command(name="propose_pact", description="Предложить дипломатический пакт")
@@ -889,6 +996,7 @@ class Game(commands.Cog):
                            subtype="Подтип союза (для alliance)")
     async def propose_pact(self, interaction: discord.Interaction, target: discord.Member, pact_type: str,
                            subtype: str = None):
+        # ... (полностью как в предыдущей версии)
         if target.id == interaction.user.id:
             await interaction.response.send_message("Нельзя заключать пакт с самим собой.", ephemeral=True)
             return
@@ -954,6 +1062,7 @@ class Game(commands.Cog):
 
     @app_commands.command(name="accept_pact", description="Принять предложенный пакт (по ID)")
     async def accept_pact(self, interaction: discord.Interaction, pact_id: int = None):
+        # ... (без изменений)
         my_country = await self._get_country(interaction.user.id)
         if not my_country:
             await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
@@ -1000,6 +1109,7 @@ class Game(commands.Cog):
 
     @app_commands.command(name="break_pact", description="Расторгнуть все пакты с указанной страной")
     async def break_pact(self, interaction: discord.Interaction, target: discord.Member):
+        # ... (без изменений)
         if target.id == interaction.user.id:
             await interaction.response.send_message("Нельзя разорвать пакт с самим собой.", ephemeral=True)
             return
@@ -1023,6 +1133,7 @@ class Game(commands.Cog):
     @app_commands.describe(target="Страна (игрок)", sanction_type="Тип санкции", description="Описание")
     async def impose_sanction(self, interaction: discord.Interaction, target: discord.Member, sanction_type: str,
                               description: str = ""):
+        # ... (без изменений)
         if target.id == interaction.user.id:
             await interaction.response.send_message("Нельзя наложить санкции на самого себя.", ephemeral=True)
             return
@@ -1065,6 +1176,7 @@ class Game(commands.Cog):
 
     @app_commands.command(name="lift_sanction", description="Снять санкцию по ID")
     async def lift_sanction(self, interaction: discord.Interaction, sanction_id: int):
+        # ... (без изменений)
         my_country = await self._get_country(interaction.user.id)
         if not my_country:
             await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
@@ -1091,10 +1203,11 @@ class Game(commands.Cog):
         await interaction.response.send_message(f"Санкция ID {sanction_id} снята.", ephemeral=True)
 
     # ========================
-    # АЛЬЯНСЫ
+    # АЛЬЯНСЫ (без изменений, но с уведомлениями)
     # ========================
     @app_commands.command(name="create_alliance", description="Создать новый альянс")
     async def create_alliance(self, interaction: discord.Interaction, alliance_name: str):
+        # ... (полный код как в предыдущей версии)
         my_country = await self._get_country(interaction.user.id)
         if not my_country:
             await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
@@ -1133,6 +1246,7 @@ class Game(commands.Cog):
 
     @app_commands.command(name="invite_alliance", description="Пригласить страну в ваш альянс (требуется подтверждение)")
     async def invite_alliance(self, interaction: discord.Interaction, target: discord.Member):
+        # ... (без изменений)
         if target.id == interaction.user.id:
             await interaction.response.send_message("Нельзя пригласить самого себя.", ephemeral=True)
             return
@@ -1172,6 +1286,7 @@ class Game(commands.Cog):
 
     @app_commands.command(name="accept_alliance", description="Принять приглашение в альянс (запасной метод)")
     async def accept_alliance(self, interaction: discord.Interaction):
+        # ... (без изменений)
         target_user = interaction.user
         invite = pending_alliance_invites.pop(target_user.id, None)
         if not invite:
@@ -1203,6 +1318,7 @@ class Game(commands.Cog):
 
     @app_commands.command(name="kick_alliance", description="Исключить участника из альянса (только лидер)")
     async def kick_alliance(self, interaction: discord.Interaction, target: discord.Member):
+        # ... (без изменений)
         if target.id == interaction.user.id:
             await interaction.response.send_message("Нельзя исключить самого себя.", ephemeral=True)
             return
@@ -1233,6 +1349,7 @@ class Game(commands.Cog):
 
     @app_commands.command(name="leave_alliance", description="Покинуть текущий альянс")
     async def leave_alliance(self, interaction: discord.Interaction):
+        # ... (без изменений)
         my_country = await self._get_country(interaction.user.id)
         if not my_country:
             await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
@@ -1259,6 +1376,7 @@ class Game(commands.Cog):
 
     @app_commands.command(name="disband_alliance", description="Распустить альянс (только лидер)")
     async def disband_alliance(self, interaction: discord.Interaction):
+        # ... (без изменений)
         my_country = await self._get_country(interaction.user.id)
         if not my_country:
             await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
@@ -1284,7 +1402,7 @@ class Game(commands.Cog):
         await interaction.response.send_message(f"Альянс '{alliance['name']}' распущен.", ephemeral=True)
 
     # ========================
-    # ВОЙНА
+    # ВОЙНА (обновлено с реальными данными армии)
     # ========================
     @app_commands.command(name="declare_war", description="Объявить войну стране")
     async def declare_war(self, interaction: discord.Interaction, target: discord.Member):
@@ -1314,16 +1432,14 @@ class Game(commands.Cog):
             (my_country['id'], target_country['id'], now)
         )
 
-        # Получаем имена правителей и силы армий
         attacker_name = my_country['display_name'] or my_country['name']
         defender_name = target_country['display_name'] or target_country['name']
         attacker_ruler = my_country['ruler_name'] or "Неизвестный правитель"
         defender_ruler = target_country['ruler_name'] or "Неизвестный правитель"
-        attacker_strength = my_country.get('combat_capability', 0)
-        defender_strength = target_country.get('combat_capability', 0)
-        # Заглушки для численности армии (пока 0, в будущем заменим на реальные данные)
-        attacker_army_count = 0
-        defender_army_count = 0
+        attacker_strength = my_country['combat_capability']
+        defender_strength = target_country['combat_capability']
+        attacker_army = my_country['army_count']
+        defender_army = target_country['army_count']
 
         date_str = datetime.datetime.now().strftime("%d.%m.%Y")
         war_channel = discord.utils.get(interaction.guild.text_channels, name="военные-сводки")
@@ -1333,11 +1449,10 @@ class Game(commands.Cog):
                 f"Сегодня, {date_str}, **{attacker_name}** под руководством **{attacker_ruler}** объявило войну **{defender_name}**.\n\n"
                 f"**Дата начала вооружённого конфликта:** {date_str}\n"
                 f"**Силы сторон:** {attacker_name} ({attacker_strength}) vs {defender_name} ({defender_strength})\n"
-                f"**Численность сторон:** {attacker_name} ({attacker_army_count}) vs {defender_name} ({defender_army_count})"
+                f"**Численность сторон:** {attacker_name} ({format_number(attacker_army)}) vs {defender_name} ({format_number(defender_army)})"
             )
             await war_channel.send(message)
 
-        # Уведомление цели
         try:
             await target.send(f"{interaction.user.mention} объявил вам войну от страны **{attacker_name}**!")
         except discord.Forbidden:
@@ -1346,6 +1461,7 @@ class Game(commands.Cog):
 
     @app_commands.command(name="peace_treaty", description="Предложить мир противнику")
     async def peace_treaty(self, interaction: discord.Interaction, target: discord.Member):
+        # ... (без изменений)
         if target.id == interaction.user.id:
             await interaction.response.send_message("Нельзя заключить мир с самим собой.", ephemeral=True)
             return
