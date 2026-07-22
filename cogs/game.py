@@ -922,50 +922,65 @@ class Game(commands.Cog):
         content += f"Сила армии: {country['combat_capability']}\n"
         await interaction.response.send_message(content, ephemeral=True)
 
-    @app_commands.command(name="recruit", description="Нанять солдат в армию")
-    @app_commands.describe(amount="Количество новобранцев")
-    async def recruit(self, interaction: discord.Interaction, amount: int):
-        if amount <= 0:
-            await interaction.response.send_message("Укажите положительное число.", ephemeral=True)
-            return
-        country = await self._get_country(interaction.user.id)
-        if not country:
-            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
-            return
-        # Проверка населения
-        if amount > country['population'] - country['army_count']:
-            await interaction.response.send_message("Недостаточно свободного населения.", ephemeral=True)
-            return
-        # Стоимость рекрута: базовая цена за 1 солдата в долларах и продовольствии
-        # При мобилизации скидка 50%
-        cost_money = 10 * amount  # 10 долларов за рекрута
-        cost_food = 5 * amount    # 5 продовольствия за рекрута
-        if country['mobilization']:
-            cost_money = cost_money // 2
-            cost_food = cost_food // 2
+@app_commands.command(name="recruit", description="Нанять солдат в армию")
+@app_commands.describe(amount="Количество новобранцев")
+async def recruit(self, interaction: discord.Interaction, amount: int):
+    if amount <= 0:
+        await interaction.response.send_message("Укажите положительное число.", ephemeral=True)
+        return
+    country = await self._get_country(interaction.user.id)
+    if not country:
+        await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+        return
 
-        # Проверка ресурсов
-        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
-        if not money_row or money_row['amount'] < cost_money:
-            await interaction.response.send_message("Недостаточно денег.", ephemeral=True)
-            return
-        food_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Продовольствие'", (country['id'],))
-        if not food_row or food_row['amount'] < cost_food:
-            await interaction.response.send_message("Недостаточно продовольствия.", ephemeral=True)
-            return
+    population = country['population']
+    current_army = country['army_count']
+    max_army = int(population * 0.05)  # 5% населения
 
-        # Списание ресурсов
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (cost_money, country['id']))
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (cost_food, country['id']))
-        # Увеличение армии
-        await async_execute("UPDATE countries SET army_count = army_count + ? WHERE id=?", (amount, country['id']))
-        # Обновление силы армии (простая формула: чем больше армия, тем выше сила)
-        # Пока так: сила = min(100, базовая + армия/100000)
-        new_army_count = country['army_count'] + amount
-        new_strength = min(100, country['combat_capability'] + amount / 10000)
-        await async_execute("UPDATE countries SET combat_capability = ? WHERE id=?", (new_strength, country['id']))
+    # Проверка на максимум армии
+    if current_army + amount > max_army:
+        await interaction.response.send_message(
+            f"❌ Нельзя иметь более 5% населения в армии (максимум {format_number(max_army)} чел.). Сейчас в армии {format_number(current_army)} чел., вы хотите нанять {format_number(amount)}.",
+            ephemeral=True
+        )
+        return
 
-        await interaction.response.send_message(f"Нанято {format_number(amount)} солдат. Новая численность армии: {format_number(new_army_count)}.", ephemeral=True)
+    # Проверка, что хватает свободного населения (неотрицательное)
+    if amount > population - current_army:
+        await interaction.response.send_message("Недостаточно свободного населения.", ephemeral=True)
+        return
+
+    # Стоимость рекрута
+    cost_money = 10 * amount
+    cost_food = 5 * amount
+    if country['mobilization']:
+        cost_money = cost_money // 2
+        cost_food = cost_food // 2
+
+    # Проверка ресурсов
+    money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
+    if not money_row or money_row['amount'] < cost_money:
+        await interaction.response.send_message("Недостаточно денег.", ephemeral=True)
+        return
+    food_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Продовольствие'", (country['id'],))
+    if not food_row or food_row['amount'] < cost_food:
+        await interaction.response.send_message("Недостаточно продовольствия.", ephemeral=True)
+        return
+
+    # Списание ресурсов
+    await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (cost_money, country['id']))
+    await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (cost_food, country['id']))
+    # Увеличение армии
+    new_army_count = current_army + amount
+    await async_execute("UPDATE countries SET army_count = ? WHERE id=?", (new_army_count, country['id']))
+    # Обновление силы армии
+    new_strength = min(100, country['combat_capability'] + amount / 10000)
+    await async_execute("UPDATE countries SET combat_capability = ? WHERE id=?", (new_strength, country['id']))
+
+    await interaction.response.send_message(
+        f"✅ Нанято {format_number(amount)} солдат. Теперь в армии {format_number(new_army_count)} чел. (из максимум {format_number(max_army)}).",
+        ephemeral=True
+    )
 
     @app_commands.command(name="disband", description="Распустить часть армии")
     @app_commands.describe(amount="Сколько солдат уволить")
