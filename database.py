@@ -208,5 +208,14 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
+
+    # ---------- ИНДЕКСЫ ДЛЯ БЫСТРЫХ ЗАПРОСОВ ----------
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_attacker ON wars(attacker_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_defender ON wars(defender_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pacts_from ON pacts(from_country)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pacts_to ON pacts(to_country)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sanctions_to ON sanctions(to_country)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_alliance_members_country ON alliance_members(country_id)")
+
     conn.commit()
     conn.close()
