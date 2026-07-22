@@ -6,7 +6,7 @@ from database import init_db, async_fetch_all, async_execute
 import datetime
 
 # Токен читается из переменной окружения (безопасно)
-TOKEN = os.environ.get("MTUyOTIzNTQ0MDgxNTgzNzIxNQ.GBQD_i.r5ZNvd16qYJ5_6NGLwynYSHY1S5itDlpfuiYyw")
+TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
     print("ОШИБКА: не установлена переменная окружения DISCORD_TOKEN!")
     exit(1)
