@@ -4,6 +4,7 @@ from discord import app_commands
 from database import async_fetch_all, async_fetch_one, async_execute
 from data.buildings import BUILDING_TYPES
 import time
+import datetime  # добавлено для форматирования даты
 
 # ========================
 # КОНСТАНТЫ (эмодзи, словари)
@@ -334,8 +335,8 @@ class AllianceInviteView(discord.ui.View):
             await interaction.response.send_message("Приглашение больше не действительно.", ephemeral=True)
             return
 
-        # Проверяем страну игрока
-        target_country = await async_fetch_one("SELECT id FROM countries WHERE owner_id=?", (interaction.user.id,))
+        # Проверяем страну игрока (теперь получаем и id, и name)
+        target_country = await async_fetch_one("SELECT id, name FROM countries WHERE owner_id=?", (interaction.user.id,))
         if not target_country:
             await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
             return
@@ -357,7 +358,7 @@ class AllianceInviteView(discord.ui.View):
             channel = interaction.client.get_channel(channel_id_row['channel_id'])
             if channel:
                 await channel.set_permissions(interaction.user, read_messages=True, send_messages=True)
-        # Уведомление лидеру
+        # Уведомление лидеру (теперь с правильным названием страны)
         leader_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?",
                                                (self.leader_country_id,))
         if leader_country:
@@ -365,7 +366,7 @@ class AllianceInviteView(discord.ui.View):
             if leader_user:
                 try:
                     await leader_user.send(
-                        f"Игрок {interaction.user.mention} принял приглашение в альянс **{self.alliance_name}** (страна {target_country['name'] if 'name' in target_country else 'неизвестно'}).")
+                        f"Игрок {interaction.user.mention} принял приглашение в альянс **{self.alliance_name}** (страна **{target_country['name']}**).")
                 except:
                     pass
         await interaction.response.edit_message(content=f"Вы вступили в альянс **{self.alliance_name}**.", view=None)
@@ -409,7 +410,6 @@ class PactProposalView(discord.ui.View):
             await interaction.response.send_message("Это предложение не для вас.", ephemeral=True)
             return
 
-        # Проверим, что предложение ещё существует и не принято
         proposal = await async_fetch_one("SELECT * FROM pacts WHERE id=? AND accepted=0", (self.pact_id,))
         if not proposal:
             await interaction.response.edit_message(content="Это предложение уже не действительно.", view=None)
@@ -424,7 +424,6 @@ class PactProposalView(discord.ui.View):
             await interaction.response.edit_message(content="Вы не являетесь получателем этого предложения.", view=None)
             return
 
-        # Проверки лимитов для alliance
         if proposal['type'] == 'alliance':
             total = await async_fetch_one(
                 "SELECT COUNT(*) as cnt FROM pacts WHERE (from_country=? OR to_country=?) AND type='alliance' AND accepted=1",
@@ -434,7 +433,6 @@ class PactProposalView(discord.ui.View):
                                                         view=None)
                 return
 
-        # Принимаем
         await async_execute("UPDATE pacts SET accepted=1 WHERE id=?", (self.pact_id,))
         # Уведомление инициатору
         from_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?", (self.from_country_id,))
@@ -462,9 +460,7 @@ class PactProposalView(discord.ui.View):
             await interaction.response.edit_message(content="Это предложение уже не действительно.", view=None)
             return
 
-        # Удаляем предложение
         await async_execute("DELETE FROM pacts WHERE id=?", (self.pact_id,))
-        # Уведомление инициатору
         from_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?", (self.from_country_id,))
         if from_country:
             initiator = interaction.client.get_user(from_country['owner_id'])
@@ -782,9 +778,6 @@ class Game(commands.Cog):
     async def _get_country(self, user_id):
         return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
 
-    # ========================
-    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ УВЕДОМЛЕНИЙ
-    # ========================
     async def _notify_user(self, user_id, message):
         """Отправить ЛС пользователю, игнорируя ошибки"""
         user = self.bot.get_user(user_id)
@@ -939,14 +932,12 @@ class Game(commands.Cog):
             await interaction.response.send_message("Такой пакт уже существует.", ephemeral=True)
             return
 
-        # Создаём предложение
         await async_execute(
             "INSERT INTO pacts (from_country, to_country, type, subtype, accepted) VALUES (?, ?, ?, ?, 0)",
             (my_country['id'], target_country['id'], pact_type, subtype or "")
         )
         pact_id = (await async_fetch_one("SELECT last_insert_rowid() as id", ()))['id']
 
-        # Отправляем интерактивное уведомление цели
         view = PactProposalView(pact_id, target.id, my_country['id'], pact_type, subtype)
         subtype_text = f" ({subtype})" if subtype else ""
         try:
@@ -956,7 +947,7 @@ class Game(commands.Cog):
                 view=view
             )
         except discord.Forbidden:
-            pass  # ЛС закрыты, цель может использовать /accept_pact
+            pass
 
         await interaction.response.send_message(
             f"Предложение пакта '{pact_type}' отправлено стране {target_country['name']}.", ephemeral=True)
@@ -1000,7 +991,6 @@ class Game(commands.Cog):
                                                         ephemeral=True)
                 return
         await async_execute("UPDATE pacts SET accepted=1 WHERE id=?", (pact_id,))
-        # Уведомление инициатору
         from_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?",
                                              (proposal['from_country'],))
         if from_country:
@@ -1025,7 +1015,6 @@ class Game(commands.Cog):
             "DELETE FROM pacts WHERE ((from_country=? AND to_country=?) OR (from_country=? AND to_country=?)) AND accepted=1",
             (my_country['id'], target_country['id'], target_country['id'], my_country['id'])
         )
-        # Уведомление второй стороне
         await self._notify_country_owner(target_country['id'],
                                          f"Страна **{my_country['name']}** расторгла все пакты с вами.")
         await interaction.response.send_message(f"Все пакты с {target_country['name']} расторгнуты.", ephemeral=True)
@@ -1067,7 +1056,6 @@ class Game(commands.Cog):
             "INSERT INTO sanctions (from_country, to_country, sanction_type, description, affected_param, effect_amount) VALUES (?, ?, ?, ?, ?, ?)",
             (my_country['id'], target_country['id'], sanction_type, desc, param, amount)
         )
-        # Уведомление цели
         try:
             await target.send(
                 f"{interaction.user.mention} наложил на вас санкцию: **{desc}** ({sanction_type}).")
@@ -1075,7 +1063,7 @@ class Game(commands.Cog):
             pass
         await interaction.response.send_message(f"Санкция '{desc}' наложена на {target_country['name']}.", ephemeral=True)
 
-    @app_commands.command(name="lift_sanction", description="Снять санкцию по ID (посмотрите ID через кнопку 'Мои санкции')")
+    @app_commands.command(name="lift_sanction", description="Снять санкцию по ID")
     async def lift_sanction(self, interaction: discord.Interaction, sanction_id: int):
         my_country = await self._get_country(interaction.user.id)
         if not my_country:
@@ -1090,7 +1078,6 @@ class Game(commands.Cog):
                                                     ephemeral=True)
             return
 
-        # Восстановление параметра
         current_val_row = await async_fetch_one(f"SELECT {sanction['affected_param']} FROM countries WHERE id=?",
                                                 (sanction['to_country'],))
         if current_val_row:
@@ -1099,7 +1086,6 @@ class Game(commands.Cog):
             await async_execute(f"UPDATE countries SET {sanction['affected_param']}=? WHERE id=?",
                                 (new_val, sanction['to_country']))
         await async_execute("DELETE FROM sanctions WHERE id=?", (sanction_id,))
-        # Уведомление цели
         await self._notify_country_owner(sanction['to_country'],
                                          f"Страна **{my_country['name']}** сняла с вас санкцию **{sanction['sanction_type']}**.")
         await interaction.response.send_message(f"Санкция ID {sanction_id} снята.", ephemeral=True)
@@ -1139,8 +1125,7 @@ class Game(commands.Cog):
             "INSERT INTO alliances (name, leader_id, channel_id) VALUES (?, ?, ?)",
             (alliance_name, my_country['id'], channel.id)
         )
-        alliance_id = \
-        (await async_fetch_one("SELECT id FROM alliances WHERE name=? AND leader_id=?", (alliance_name, my_country['id'])))['id']
+        alliance_id = (await async_fetch_one("SELECT id FROM alliances WHERE name=? AND leader_id=?", (alliance_name, my_country['id'])))['id']
         await async_execute("INSERT INTO alliance_members (alliance_id, country_id) VALUES (?, ?)",
                             (alliance_id, my_country['id']))
         await interaction.response.send_message(f"Альянс '{alliance_name}' создан, канал {channel.mention}.",
@@ -1173,9 +1158,7 @@ class Game(commands.Cog):
                 f"Игрок {target.mention} уже состоит в максимальном количестве альянсов (5).", ephemeral=True)
             return
 
-        # Сохраняем приглашение в памяти
         pending_alliance_invites[target.id] = (alliance['id'], my_country['id'])
-        # Отправляем кнопочное приглашение
         view = AllianceInviteView(alliance['id'], alliance['name'], my_country['id'], target.id)
         try:
             await target.send(
@@ -1214,9 +1197,8 @@ class Game(commands.Cog):
             if channel:
                 await channel.set_permissions(target_user, read_messages=True, send_messages=True)
         alliance_name = (await async_fetch_one("SELECT name FROM alliances WHERE id=?", (alliance_id,)))['name']
-        # Уведомление лидеру
         await self._notify_country_owner(leader_id,
-                                         f"Игрок {target_user.mention} принял приглашение в альянс **{alliance_name}**.")
+                                         f"Игрок {target_user.mention} принял приглашение в альянс **{alliance_name}** (страна **{my_country['name']}**).")
         await interaction.response.send_message(f"Вы вступили в альянс '{alliance_name}'.", ephemeral=True)
 
     @app_commands.command(name="kick_alliance", description="Исключить участника из альянса (только лидер)")
@@ -1244,7 +1226,6 @@ class Game(commands.Cog):
         channel = self.bot.get_channel(alliance['channel_id'])
         if channel:
             await channel.set_permissions(target, overwrite=None)
-        # Уведомление исключённому
         await self._notify_country_owner(target_country['id'],
                                          f"Вы были исключены из альянса **{alliance['name']}**.")
         await interaction.response.send_message(f"{target.mention} исключён из альянса '{alliance['name']}'.",
@@ -1272,9 +1253,8 @@ class Game(commands.Cog):
         channel = self.bot.get_channel(alliance['channel_id'])
         if channel:
             await channel.set_permissions(interaction.user, overwrite=None)
-        # Уведомление лидеру
         await self._notify_country_owner(alliance['leader_id'],
-                                         f"Игрок {interaction.user.mention} покинул ваш альянс **{alliance['name']}**.")
+                                         f"Игрок {interaction.user.mention} покинул ваш альянс **{alliance['name']}** (страна **{my_country['name']}**).")
         await interaction.response.send_message(f"Вы покинули альянс '{alliance['name']}'.", ephemeral=True)
 
     @app_commands.command(name="disband_alliance", description="Распустить альянс (только лидер)")
@@ -1290,16 +1270,13 @@ class Game(commands.Cog):
         if not alliance:
             await interaction.response.send_message("Вы не лидер альянса.", ephemeral=True)
             return
-        # Получаем всех участников, чтобы уведомить
         members = await async_fetch_all("SELECT country_id FROM alliance_members WHERE alliance_id=?",
                                         (alliance['id'],))
-        # Удаляем альянс
         channel = self.bot.get_channel(alliance['channel_id'])
         if channel:
             await channel.delete()
         await async_execute("DELETE FROM alliance_members WHERE alliance_id=?", (alliance['id'],))
         await async_execute("DELETE FROM alliances WHERE id=?", (alliance['id'],))
-        # Уведомляем всех участников (кроме лидера, он и так знает)
         for m in members:
             if m['country_id'] != my_country['id']:
                 await self._notify_country_owner(m['country_id'],
@@ -1330,19 +1307,42 @@ class Game(commands.Cog):
         if existing:
             await interaction.response.send_message("Вы уже воюете с этой страной.", ephemeral=True)
             return
+
+        now = time.time()
         await async_execute(
             "INSERT INTO wars (attacker_id, defender_id, status, start_time) VALUES (?, ?, 'active', ?)",
-            (my_country['id'], target_country['id'], time.time())
+            (my_country['id'], target_country['id'], now)
         )
+
+        # Получаем имена правителей и силы армий
+        attacker_name = my_country['display_name'] or my_country['name']
+        defender_name = target_country['display_name'] or target_country['name']
+        attacker_ruler = my_country['ruler_name'] or "Неизвестный правитель"
+        defender_ruler = target_country['ruler_name'] or "Неизвестный правитель"
+        attacker_strength = my_country.get('combat_capability', 0)
+        defender_strength = target_country.get('combat_capability', 0)
+        # Заглушки для численности армии (пока 0, в будущем заменим на реальные данные)
+        attacker_army_count = 0
+        defender_army_count = 0
+
+        date_str = datetime.datetime.now().strftime("%d.%m.%Y")
         war_channel = discord.utils.get(interaction.guild.text_channels, name="военные-сводки")
         if war_channel:
-            await war_channel.send(f"⚔️ {my_country['name']} объявил войну {target_country['name']}!")
+            message = (
+                f"# Объявление войны\n\n"
+                f"Сегодня, {date_str}, **{attacker_name}** под руководством **{attacker_ruler}** объявило войну **{defender_name}**.\n\n"
+                f"**Дата начала вооружённого конфликта:** {date_str}\n"
+                f"**Силы сторон:** {attacker_name} ({attacker_strength}) vs {defender_name} ({defender_strength})\n"
+                f"**Численность сторон:** {attacker_name} ({attacker_army_count}) vs {defender_name} ({defender_army_count})"
+            )
+            await war_channel.send(message)
+
         # Уведомление цели
         try:
-            await target.send(f"{interaction.user.mention} объявил вам войну от страны **{my_country['name']}**!")
+            await target.send(f"{interaction.user.mention} объявил вам войну от страны **{attacker_name}**!")
         except discord.Forbidden:
             pass
-        await interaction.response.send_message(f"Война объявлена стране {target_country['name']}.", ephemeral=True)
+        await interaction.response.send_message(f"Война объявлена стране {defender_name}.", ephemeral=True)
 
     @app_commands.command(name="peace_treaty", description="Предложить мир противнику")
     async def peace_treaty(self, interaction: discord.Interaction, target: discord.Member):
@@ -1366,7 +1366,6 @@ class Game(commands.Cog):
                                                     ephemeral=True)
             return
         await async_execute("UPDATE wars SET status='ended' WHERE id=?", (war['id'],))
-        # Уведомление цели
         try:
             await target.send(
                 f"{interaction.user.mention} предложил мир от страны **{my_country['name']}**. Война окончена.")
