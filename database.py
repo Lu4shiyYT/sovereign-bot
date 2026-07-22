@@ -55,6 +55,7 @@ def get_conn():
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
+    # Создание таблицы countries с новыми полями
     cur.execute("""
         CREATE TABLE IF NOT EXISTS countries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,9 +82,13 @@ def init_db():
             ideology TEXT DEFAULT '',
             government_form TEXT DEFAULT '',
             mobilization INTEGER DEFAULT 0,
-            aggression_score REAL DEFAULT 50
+            aggression_score REAL DEFAULT 50,
+            population INTEGER DEFAULT 0,
+            army_count INTEGER DEFAULT 0
         )
     """)
+
+    # Добавление новых столбцов для существующих таблиц (без ошибок, если уже есть)
     new_columns = {
         'ruler_name': 'TEXT DEFAULT ""',
         'display_name': 'TEXT DEFAULT ""',
@@ -92,7 +97,9 @@ def init_db():
         'government_form': 'TEXT DEFAULT ""',
         'mobilization': 'INTEGER DEFAULT 0',
         'aggression_score': 'REAL DEFAULT 50',
-        'last_daily': 'REAL DEFAULT 0'
+        'last_daily': 'REAL DEFAULT 0',
+        'population': 'INTEGER DEFAULT 0',
+        'army_count': 'INTEGER DEFAULT 0'
     }
     for col, col_def in new_columns.items():
         try:
@@ -205,16 +212,5 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sanctions_to ON sanctions(to_country)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_alliance_members_country ON alliance_members(country_id)")
 
-    # Новые колонки для населения и армии
-    new_columns_army = {
-        'population': 'INTEGER DEFAULT 1000000',
-        'army_size': 'INTEGER DEFAULT 0'
-    }
-    for col, col_def in new_columns_army.items():
-        try:
-            cur.execute(f"ALTER TABLE countries ADD COLUMN {col} {col_def}")
-        except sqlite3.OperationalError:
-            pass
-    
     conn.commit()
     conn.close()
