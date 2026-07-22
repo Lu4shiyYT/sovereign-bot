@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from database import get_conn
+from database import get_conn, init_db
 from data.countries import initial_countries, initial_provinces
 import os
 
@@ -11,39 +11,26 @@ class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="init_game", description="Инициализировать игру (админ)")
+    @app_commands.command(name="init_game", description="Инициализировать игру (админ) – полностью пересоздаёт базу")
     @app_commands.default_permissions(administrator=True)
     async def init_game(self, interaction: discord.Interaction):
         conn = get_conn()
         cur = conn.cursor()
 
-        # Очищаем всё
-        cur.execute("DELETE FROM wars")
-        cur.execute("DELETE FROM alliance_members")
-        cur.execute("DELETE FROM alliances")
-        cur.execute("DELETE FROM sanctions")
-        cur.execute("DELETE FROM resources")
-        cur.execute("DELETE FROM buildings")
-        cur.execute("DELETE FROM provinces")
-        cur.execute("DELETE FROM technologies")
-        cur.execute("DELETE FROM countries")
+        # Уничтожаем все таблицы, чтобы гарантированно получить чистую структуру
+        tables = ["wars", "alliance_members", "alliances", "sanctions", "pacts",
+                  "resources", "buildings", "provinces", "technologies", "countries"]
+        for table in tables:
+            cur.execute(f"DROP TABLE IF EXISTS {table}")
 
-        # Пересоздаём таблицу pacts с колонкой subtype (устраняем проблему)
-        cur.execute("DROP TABLE IF EXISTS pacts")
-        cur.execute("""
-            CREATE TABLE pacts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                from_country INTEGER,
-                to_country INTEGER,
-                type TEXT,
-                subtype TEXT DEFAULT '',
-                accepted INTEGER DEFAULT 0,
-                FOREIGN KEY (from_country) REFERENCES countries(id),
-                FOREIGN KEY (to_country) REFERENCES countries(id)
-            )
-        """)
+        # Создаём всё заново с помощью init_db (правильная структура из database.py)
+        conn.commit()
+        conn.close()
+        init_db()
 
         # Заполняем страны
+        conn = get_conn()
+        cur = conn.cursor()
         for country_data in initial_countries:
             cur.execute(
                 "INSERT INTO countries (name, type, owner_id, display_name, aggression_score) VALUES (?, ?, ?, ?, ?)",
@@ -69,7 +56,7 @@ class Admin(commands.Cog):
                 )
         conn.commit()
         conn.close()
-        await interaction.response.send_message("Игра инициализирована! Все страны созданы.", ephemeral=True)
+        await interaction.response.send_message("Игра инициализирована! Все страны созданы, база пересоздана.", ephemeral=True)
 
     @app_commands.command(name="set_host", description="Назначить ведущего")
     @app_commands.default_permissions(administrator=True)
