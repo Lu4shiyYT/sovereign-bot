@@ -1,12 +1,16 @@
 import discord
 from discord.ext import commands, tasks
-import asyncio
+import os
 from keep_alive import keep_alive
 from database import init_db, async_fetch_all, async_execute
 import datetime
 
-# --- Настройки ---
-TOKEN = "MTUyOTIzNTQ0MDgxNTgzNzIxNQ.GuA9-m.yGTCujy8y5cuu8S4lx2AvMGQrMSMFtg43aGOXg"  # Замените на ваш реальный токен
+# Токен читается из переменной окружения (безопасно)
+TOKEN = os.environ.get("MTUyOTIzNTQ0MDgxNTgzNzIxNQ.GBQD_i.r5ZNvd16qYJ5_6NGLwynYSHY1S5itDlpfuiYyw")
+if not TOKEN:
+    print("ОШИБКА: не установлена переменная окружения DISCORD_TOKEN!")
+    exit(1)
+
 PREFIX = "/"
 
 intents = discord.Intents.default()
@@ -36,7 +40,6 @@ async def monthly_income():
     print("Начисление месячного дохода...")
     countries = await async_fetch_all("SELECT * FROM countries WHERE owner_id IS NOT NULL")
     for c in countries:
-        # 1. Доход от построек (упрощённо, синхронизируй с BUILDING_TYPES при необходимости)
         income = {"Доллары": 0, "Продовольствие": 0, "Нефть": 0}
         buildings = await async_fetch_all(
             "SELECT building_type, level FROM buildings WHERE country_id=? AND build_end_time=0 AND level>0",
@@ -50,9 +53,7 @@ async def monthly_income():
                 income["Нефть"] += 50 * lvl
             elif b['building_type'] == "Бизнес-центр":
                 income["Доллары"] += 200 * lvl
-            # ... другие типы построек, если есть
 
-        # Модификатор мобилизации: доход снижается вдвое
         if c['mobilization']:
             for res in income:
                 income[res] = int(income[res] * 0.5)
@@ -64,7 +65,6 @@ async def monthly_income():
                     (c['id'], res_name, amount, amount)
                 )
 
-        # 2. Расход на содержание армии
         army_count = c['army_count']
         upkeep_money = int(army_count * 0.1)
         upkeep_food = int(army_count * 0.05)
@@ -73,20 +73,17 @@ async def monthly_income():
         if upkeep_food > 0:
             await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (upkeep_food, c['id']))
 
-        # 3. Потребление продовольствия населением
         population = c['population']
         food_consumption = int(population * 0.001)
         if food_consumption > 0:
             await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (food_consumption, c['id']))
 
-        # 4. Прирост населения
         growth_rate_year = c['demographic_growth'] / 100.0
         growth_per_month = int(population * growth_rate_year / 12)
         if growth_per_month > 0:
             new_population = population + growth_per_month
             await async_execute("UPDATE countries SET population = ? WHERE id=?", (new_population, c['id']))
 
-        # Уведомление игроку
         user = bot.get_user(c['owner_id'])
         if user:
             try:
