@@ -3,7 +3,7 @@ import asyncio
 
 DB_PATH = "sovereign.db"
 
-# Синхронные вспомогательные функции для выполнения в потоках
+# Синхронные функции для работы в потоках
 def _fetch_all(query, params=()):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -50,7 +50,7 @@ async def async_execute_many(query, params_list):
     await asyncio.to_thread(_execute_many, query, params_list)
 
 def get_conn():
-    """Обычное синхронное соединение (используется в admin-командах, выполняется в основном потоке)."""
+    """Синхронное соединение для использования в основных потоках."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -76,9 +76,16 @@ def init_db():
             government_efficiency REAL DEFAULT 50,
             info_security REAL DEFAULT 50,
             counter_intelligence REAL DEFAULT 50,
-            demographic_growth REAL DEFAULT 0.5
+            demographic_growth REAL DEFAULT 0.5,
+            last_daily REAL DEFAULT 0
         )
     """)
+    # Добавляем колонку last_daily, если её ещё нет (для старых баз)
+    try:
+        cur.execute("ALTER TABLE countries ADD COLUMN last_daily REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # колонка уже существует
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS provinces (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
