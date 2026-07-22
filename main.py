@@ -13,10 +13,17 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 async def on_ready():
     print(f'{bot.user} запущен!')
     init_db()
+    # Загружаем расширения
     await bot.load_extension('cogs.admin')
     await bot.load_extension('cogs.game')
     await bot.load_extension('cogs.war')
     print('Cogs загружены.')
+    # Синхронизируем слеш-команды с Discord
+    try:
+        synced = await bot.tree.sync()
+        print(f'Синхронизировано {len(synced)} команд.')
+    except Exception as e:
+        print(f'Ошибка синхронизации: {e}')
 
 keep_alive()
 bot.run(TOKEN)
