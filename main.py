@@ -21,7 +21,6 @@ async def monthly_income_loop():
     if not rows:
         print("Нет активных построек.")
         return
-    # Суммируем производство по странам и ресурсам
     income = {}
     for row in rows:
         cid = row['country_id']
@@ -31,7 +30,6 @@ async def monthly_income_loop():
         for res, base in produces.items():
             total = base * level
             income[(cid, res)] = income.get((cid, res), 0) + total
-    # Начисляем ресурсы
     for (cid, res), amount in income.items():
         await async_execute(
             "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) "
@@ -43,10 +41,10 @@ async def monthly_income_loop():
 @bot.event
 async def on_ready():
     print(f'{bot.user} запущен!')
-    init_db()  # инициализация БД
+    init_db()
+    # Загружаем только нужные расширения (war не загружаем!)
     await bot.load_extension('cogs.admin')
     await bot.load_extension('cogs.game')
-    await bot.load_extension('cogs.war')
     print('Cogs загружены.')
 
     # Синхронизация слеш-команд
@@ -56,7 +54,7 @@ async def on_ready():
     except Exception as e:
         print(f'Ошибка синхронизации: {e}')
 
-    # Запускаем месячный доход (только если не запущен)
+    # Запускаем месячный доход, если ещё не запущен
     if not monthly_income_loop.is_running():
         monthly_income_loop.start()
 
