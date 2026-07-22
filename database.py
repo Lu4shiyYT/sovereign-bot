@@ -3,43 +3,57 @@ import asyncio
 
 DB_PATH = "sovereign.db"
 
-def get_conn():
+# Синхронные вспомогательные функции для выполнения в потоках
+def _fetch_all(query, params=()):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
-
-async def async_get_conn():
-    return await asyncio.to_thread(get_conn)
-
-async def async_fetch_one(query, params=()):
-    conn = await async_get_conn()
-    cur = conn.cursor()
-    cur.execute(query, params)
-    row = cur.fetchone()
-    conn.close()
-    return row
-
-async def async_fetch_all(query, params=()):
-    conn = await async_get_conn()
     cur = conn.cursor()
     cur.execute(query, params)
     rows = cur.fetchall()
     conn.close()
     return rows
 
-async def async_execute(query, params=()):
-    conn = await async_get_conn()
+def _fetch_one(query, params=()):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(query, params)
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+def _execute(query, params=()):
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute(query, params)
     conn.commit()
     conn.close()
 
-async def async_execute_many(query, params_list):
-    conn = await async_get_conn()
+def _execute_many(query, params_list):
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.executemany(query, params_list)
     conn.commit()
     conn.close()
+
+# Асинхронные обёртки
+async def async_fetch_all(query, params=()):
+    return await asyncio.to_thread(_fetch_all, query, params)
+
+async def async_fetch_one(query, params=()):
+    return await asyncio.to_thread(_fetch_one, query, params)
+
+async def async_execute(query, params=()):
+    await asyncio.to_thread(_execute, query, params)
+
+async def async_execute_many(query, params_list):
+    await asyncio.to_thread(_execute_many, query, params_list)
+
+def get_conn():
+    """Обычное синхронное соединение (используется в admin-командах, выполняется в основном потоке)."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     conn = get_conn()
