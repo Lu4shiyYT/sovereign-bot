@@ -180,66 +180,68 @@ class StatsView(discord.ui.View):
             prest_text, prest_circle = get_prestige_text(country['international_prestige'])
             content += f"{EMOJI['prestige']} Международный авторитет: {prest_circle} {prest_text}\n"
 
+            # Войны – загружаем врагов одним запросом с JOIN
             wars = await async_fetch_all(
-                "SELECT id, attacker_id, defender_id FROM wars WHERE (attacker_id=? OR defender_id=?) AND status='active'",
-                (country['id'], country['id'])
+                "SELECT DISTINCT c2.name AS enemy_name FROM wars w "
+                "JOIN countries c2 ON (c2.id = CASE WHEN w.attacker_id = ? THEN w.defender_id ELSE w.attacker_id END) "
+                "WHERE (w.attacker_id = ? OR w.defender_id = ?) AND w.status = 'active'",
+                (country['id'], country['id'], country['id'])
             )
             if wars:
-                enemies = []
-                for w in wars:
-                    enemy_id = w['attacker_id'] if w['defender_id'] == country['id'] else w['defender_id']
-                    enemy = await async_fetch_one("SELECT name FROM countries WHERE id=?", (enemy_id,))
-                    enemies.append(enemy['name'] if enemy else "Неизвестно")
+                enemies = [w['enemy_name'] for w in wars]
                 content += f"{EMOJI['war_status']} В состоянии войны: да (против: {', '.join(enemies)})\n"
             else:
                 content += f"{EMOJI['war_status']} В состоянии войны: нет\n"
 
             content += f"{EMOJI['dependency']} Зависимость: независимое\n"
 
+            # Пакты и союзы – загружаем сразу с именами партнёров
             if self.is_ally:
                 pacts = await async_fetch_all(
-                    "SELECT type, subtype, from_country, to_country FROM pacts WHERE (from_country=? OR to_country=?) AND accepted=1",
-                    (country['id'], country['id'])
+                    "SELECT p.type, p.subtype, c2.name AS partner_name FROM pacts p "
+                    "JOIN countries c2 ON (c2.id = CASE WHEN p.from_country = ? THEN p.to_country ELSE p.from_country END) "
+                    "WHERE (p.from_country = ? OR p.to_country = ?) AND p.accepted = 1",
+                    (country['id'], country['id'], country['id'])
                 )
                 allies = []
                 trade = []
                 for p in pacts:
-                    partner_id = p['from_country'] if p['to_country'] == country['id'] else p['to_country']
-                    partner = await async_fetch_one("SELECT name FROM countries WHERE id=?", (partner_id,))
-                    if partner:
-                        if p['type'] == 'alliance':
-                            allies.append(f"{partner['name']} ({p['subtype']})")
-                        elif p['type'] == 'trade':
-                            trade.append(partner['name'])
+                    if p['type'] == 'alliance':
+                        allies.append(f"{p['partner_name']} ({p['subtype']})")
+                    elif p['type'] == 'trade':
+                        trade.append(p['partner_name'])
                 content += f"{EMOJI['alliance']} Союзы: {', '.join(allies) if allies else 'нет'}\n"
                 content += f"{EMOJI['alliance']} Торговые партнёры: {', '.join(trade) if trade else 'нет'}\n"
             else:
                 content += f"{EMOJI['alliance']} Союзы: неизвестно\n"
                 content += f"{EMOJI['alliance']} Торговые партнёры: неизвестно\n"
 
+            # Альянсы
             if self.is_ally:
-                member_of = await async_fetch_all(
-                    "SELECT a.name FROM alliances a JOIN alliance_members am ON a.id=am.alliance_id WHERE am.country_id=?",
+                alliances = await async_fetch_all(
+                    "SELECT a.name FROM alliances a JOIN alliance_members am ON a.id = am.alliance_id WHERE am.country_id = ?",
                     (country['id'],)
                 )
-                if member_of:
-                    content += f"{EMOJI['alliance']} Альянсы: " + ", ".join([a['name'] for a in member_of]) + "\n"
+                if alliances:
+                    content += f"{EMOJI['alliance']} Альянсы: " + ", ".join([a['name'] for a in alliances]) + "\n"
                 else:
                     content += f"{EMOJI['alliance']} Альянсы: нет\n"
             else:
                 content += f"{EMOJI['alliance']} Альянсы: неизвестно\n"
 
+            # Санкции
             sanctions = await async_fetch_all(
-                "SELECT sanction_type, description, from_country FROM sanctions WHERE to_country=?",
+                "SELECT s.sanction_type, s.description, c2.name AS from_name FROM sanctions s "
+                "JOIN countries c2 ON s.from_country = c2.id "
+                "WHERE s.to_country = ?",
                 (country['id'],)
             )
             if sanctions:
                 content += "**Санкции:**\n"
                 for s in sanctions:
-                    from_c = await async_fetch_one("SELECT name FROM countries WHERE id=?", (s['from_country'],))
                     line = f"{EMOJI['sanction']} {s['sanction_type']}: {s['description']}"
-                    if from_c:
-                        line += f" – от {from_c['name']}"
+                    if s['from_name']:
+                        line += f" – от {s['from_name']}"
                     content += line + "\n"
             else:
                 content += "**Санкции:** нет\n"
