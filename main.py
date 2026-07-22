@@ -3,12 +3,11 @@ from discord.ext import commands, tasks
 import asyncio
 from keep_alive import keep_alive
 from database import init_db, async_fetch_all, async_execute
-from config import CHANNEL_NAME  # Убедитесь, что config.py содержит нужные константы, или замените на свои
 import datetime
 
 # --- Настройки ---
-TOKEN = "YOUR_TOKEN"  # Замените на ваш токен
-PREFIX = "/"          # Для slash-команд не обязательно
+TOKEN = "YOUR_TOKEN"  # Замените на ваш реальный токен
+PREFIX = "/"
 
 intents = discord.Intents.default()
 intents.members = True
@@ -28,7 +27,6 @@ async def on_ready():
     await load_cogs()
     await bot.tree.sync()
     print("Синхронизация команд выполнена.")
-    # Запуск фоновой задачи (если не запущена)
     if not monthly_income.is_running():
         monthly_income.start()
 
@@ -36,37 +34,29 @@ async def on_ready():
 @tasks.loop(hours=2)
 async def monthly_income():
     print("Начисление месячного дохода...")
-    # Получаем все страны, у которых есть владелец
     countries = await async_fetch_all("SELECT * FROM countries WHERE owner_id IS NOT NULL")
     for c in countries:
-        # 1. Доход от построек
+        # 1. Доход от построек (упрощённо, синхронизируй с BUILDING_TYPES при необходимости)
+        income = {"Доллары": 0, "Продовольствие": 0, "Нефть": 0}
         buildings = await async_fetch_all(
             "SELECT building_type, level FROM buildings WHERE country_id=? AND build_end_time=0 AND level>0",
             (c['id'],)
         )
-        income = {"Доллары": 0, "Продовольствие": 0, "Нефть": 0}
         for b in buildings:
-            btype = b['building_type']
-            level = b['level']
-            # Данные о производстве берутся из BUILDING_TYPES, например:
-            # Ферма: продовольствие, Шахта: ресурсы, Бизнес-центр: доллары и т.д.
-            # В этом примере просто заглушка, нужно синхронизировать с data/buildings.py
-            # Предположим, что Ферма дает продовольствие, Шахта — нефть, Бизнес-центр — доллары.
-            # Подставьте реальные данные из вашего BUILDING_TYPES.
-            if btype == "Ферма":
-                income["Продовольствие"] += 100 * level
-            elif btype == "Шахта":
-                income["Нефть"] += 50 * level
-            elif btype == "Бизнес-центр":
-                income["Доллары"] += 200 * level
-            # ... другие типы построек
+            lvl = b['level']
+            if b['building_type'] == "Ферма":
+                income["Продовольствие"] += 100 * lvl
+            elif b['building_type'] == "Шахта":
+                income["Нефть"] += 50 * lvl
+            elif b['building_type'] == "Бизнес-центр":
+                income["Доллары"] += 200 * lvl
+            # ... другие типы построек, если есть
 
-        # Применяем модификатор мобилизации: доход снижается вдвое
+        # Модификатор мобилизации: доход снижается вдвое
         if c['mobilization']:
             for res in income:
                 income[res] = int(income[res] * 0.5)
 
-        # Начисляем ресурсы
         for res_name, amount in income.items():
             if amount > 0:
                 await async_execute(
@@ -76,27 +66,18 @@ async def monthly_income():
 
         # 2. Расход на содержание армии
         army_count = c['army_count']
-        if army_count > 0:
-            upkeep_money = int(army_count * 0.1)   # 0.1 доллара в месяц за солдата
-            upkeep_food = int(army_count * 0.05)  # 0.05 продовольствия
-            # Списание денег
-            await async_execute(
-                "UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'",
-                (upkeep_money, c['id'])
-            )
-            # Списание продовольствия
-            await async_execute(
-                "UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'",
-                (upkeep_food, c['id'])
-            )
+        upkeep_money = int(army_count * 0.1)
+        upkeep_food = int(army_count * 0.05)
+        if upkeep_money > 0:
+            await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (upkeep_money, c['id']))
+        if upkeep_food > 0:
+            await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (upkeep_food, c['id']))
 
         # 3. Потребление продовольствия населением
         population = c['population']
-        food_consumption = int(population * 0.001)  # 1 единица на 1000 жителей
-        await async_execute(
-            "UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'",
-            (food_consumption, c['id'])
-        )
+        food_consumption = int(population * 0.001)
+        if food_consumption > 0:
+            await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (food_consumption, c['id']))
 
         # 4. Прирост населения
         growth_rate_year = c['demographic_growth'] / 100.0
@@ -105,18 +86,17 @@ async def monthly_income():
             new_population = population + growth_per_month
             await async_execute("UPDATE countries SET population = ? WHERE id=?", (new_population, c['id']))
 
-        # Уведомление игроку о доходах/расходах (можно отправить краткий отчёт в ЛС)
+        # Уведомление игроку
         user = bot.get_user(c['owner_id'])
         if user:
             try:
-                report = (
+                await user.send(
                     f"**Месячный отчёт для {c['display_name'] or c['name']}**\n"
-                    f"Доход: {income}\n"
+                    f"Доход: Доллары +{income['Доллары']}, Продовольствие +{income['Продовольствие']}, Нефть +{income['Нефть']}\n"
                     f"Содержание армии: -{upkeep_money}$ и -{upkeep_food} прод.\n"
                     f"Потребление продовольствия населением: -{food_consumption}\n"
                     f"Прирост населения: +{growth_per_month} чел.\n"
                 )
-                await user.send(report)
             except:
                 pass
 
