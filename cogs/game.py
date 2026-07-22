@@ -4,7 +4,6 @@ from discord import app_commands
 from database import async_fetch_all, async_fetch_one, async_execute
 from data.buildings import BUILDING_TYPES
 import time
-import math
 
 # ========================
 # ЭМОДЗИ (замените на свои ID)
@@ -41,13 +40,14 @@ EMOJI = {
     "flag": "🏳️"
 }
 
-# Форматирование чисел
 def format_number(n, decimals=0):
+    """Форматирует число: разряды точкой, дробная часть запятой."""
     if n is None:
         return "0"
     if decimals == 0:
         return f"{int(n):,}".replace(",", ".")
     else:
+        # Пример: 1234567.89 -> "1.234.567,89"
         return f"{n:,.{decimals}f}".replace(",", ".").replace(".", ",", 1)
 
 def get_color_circle(value):
@@ -95,10 +95,9 @@ class StatsView(discord.ui.View):
         self.country = country_data
         self.is_ally = is_ally
         self.target_user = target_user
-        self.current_section = None
 
-    async def show_section(self, interaction: discord.Interaction, section: str):
-        self.current_section = section
+    async def build_section(self, section: str) -> str:
+        """Возвращает текст для выбранного раздела."""
         country = self.country
         name = country['display_name'] or country['name']
         ruler = country['ruler_name'] or "Неизвестный"
@@ -106,43 +105,58 @@ class StatsView(discord.ui.View):
         header = f"Статистика игрока {self.target_user.mention}\n{flag_emoji} {name}\n\n"
         nick = self.target_user.display_name if self.target_user else ruler
 
-        def param_line(emoji, name, value, max_val=100, is_unknown=False, suffix=""):
-            if is_unknown:
-                return f"{emoji} {name}: неизвестно\n"
+        def param_line(emoji, title, value, max_val=100, unknown=False, suffix=""):
+            if unknown:
+                return f"{emoji} {title}: неизвестно\n"
             if max_val == 100:
                 circle = get_color_circle(value)
-                return f"{emoji} {name}: {circle} {value}/{max_val}\n"
+                return f"{emoji} {title}: {circle} {value}/{max_val}\n"
             else:
-                return f"{emoji} {name}: {value}{suffix}\n"
+                return f"{emoji} {title}: {value}{suffix}\n"
 
         content = ""
         if section == "main":
             content += f"**// Основные параметры**\n{nick} | {flag_emoji} {name}\n\n"
-            budget_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
+            budget_row = await async_fetch_one(
+                "SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'",
+                (country['id'],)
+            )
             budget_val = budget_row['amount'] if budget_row else 0
             content += f"{EMOJI['budget']} Бюджет: {format_number(budget_val, 2)}$\n"
-            population = 0  # заглушка, позже добавим реальное население
+            population = 0  # заглушка
             content += f"{EMOJI['population']} Население: {format_number(population)} человек\n"
             support = int(country['citizen_mood'])
             content += f"{EMOJI['support']} Рейтинг поддержки правительства: {support}\n"
 
         elif section == "development":
             content += f"**// Развитие государства**\n{nick} | {flag_emoji} {name}\n\n"
-            content += param_line(EMOJI['eco_stab'], "Экономическая стабильность", country['economic_stability'])
-            content += param_line(EMOJI['health'], "Здоровье населения", country['health'])
-            content += param_line(EMOJI['industry'], "Промышленность", country['industry_level'])
-            content += param_line(EMOJI['science'], "Научный прогресс", country['science_progress'])
-            content += param_line(EMOJI['mood'], "Настрой граждан", country['citizen_mood'])
-            content += param_line(EMOJI['crime'], "Преступность", country['crime_rate'])
-            content += param_line(EMOJI['ecology'], "Экология", country['ecology'])
-            content += f"{EMOJI['gov_eff']} Эффективность правительства: ур. {int(country['government_efficiency'])} (максимум 100)\n"
+            eco = country['economic_stability']
+            health = country['health']
+            ind = country['industry_level']
+            sci = country['science_progress']
+            mood = country['citizen_mood']
+            crime = country['crime_rate']
+            eco_val = country['ecology']
+            gov_eff = int(country['government_efficiency'])
+            info_sec = int(country['info_security'])
+            cnt_int = int(country['counter_intelligence'])
+            growth = country['demographic_growth']
+
+            content += param_line(EMOJI['eco_stab'], "Экономическая стабильность", eco)
+            content += param_line(EMOJI['health'], "Здоровье населения", health)
+            content += param_line(EMOJI['industry'], "Промышленность", ind)
+            content += param_line(EMOJI['science'], "Научный прогресс", sci)
+            content += param_line(EMOJI['mood'], "Настрой граждан", mood)
+            content += param_line(EMOJI['crime'], "Преступность", crime)
+            content += param_line(EMOJI['ecology'], "Экология", eco_val)
+            content += f"{EMOJI['gov_eff']} Эффективность правительства: ур. {gov_eff} (максимум 100)\n"
             if self.is_ally:
-                content += f"{EMOJI['info_sec']} Информационная безопасность: ур. {int(country['info_security'])} (максимум 20)\n"
-                content += f"{EMOJI['counter_int']} Контрразведка: ур. {int(country['counter_intelligence'])} (максимум 20)\n"
+                content += f"{EMOJI['info_sec']} Информационная безопасность: ур. {info_sec} (максимум 20)\n"
+                content += f"{EMOJI['counter_int']} Контрразведка: ур. {cnt_int} (максимум 20)\n"
             else:
                 content += f"{EMOJI['info_sec']} Информационная безопасность: неизвестно\n"
                 content += f"{EMOJI['counter_int']} Контрразведка: неизвестно\n"
-            content += f"{EMOJI['growth']} Демографический рост: {country['demographic_growth']:.2f}% (в год)\n"
+            content += f"{EMOJI['growth']} Демографический рост: {growth:.2f}% (в год)\n"
 
         elif section == "international":
             content += f"**// Международная арена**\n{nick} | {flag_emoji} {name}\n\n"
@@ -150,7 +164,6 @@ class StatsView(discord.ui.View):
             content += f"{EMOJI['aggression']} Агрессия государства: {aggr_circle} {aggr_text}\n"
             prest_text, prest_circle = get_prestige_text(country['international_prestige'])
             content += f"{EMOJI['prestige']} Международный авторитет: {prest_circle} {prest_text}\n"
-            # Заглушки для войны, зависимости и т.д.
             content += f"{EMOJI['war_status']} В состоянии войны: нет\n"
             content += f"{EMOJI['dependency']} Зависимость: независимое\n"
             if self.is_ally:
@@ -185,7 +198,9 @@ class StatsView(discord.ui.View):
                     groups.setdefault(t, []).append(lvl)
                 lines = []
                 for btype, levels in groups.items():
-                    lines.append(f"{EMOJI['buildings_icon']} {btype}: {len(levels)} шт. (уровни: {', '.join(map(str, levels))})")
+                    lines.append(
+                        f"{EMOJI['buildings_icon']} {btype}: {len(levels)} шт. (уровни: {', '.join(map(str, levels))})"
+                    )
                 content += "\n".join(lines)
             else:
                 content += f"{EMOJI['buildings_icon']} Постройки: нет\n"
@@ -195,7 +210,7 @@ class StatsView(discord.ui.View):
             res = await async_fetch_all("SELECT resource_name, amount FROM resources WHERE country_id=?", (country['id'],))
             if res:
                 for r in res:
-                    content += f"{r['resource_name']}: {format_number(r['amount'], 2)}\n"
+                    content += f"{r['resource_name']}: {format_number(r['amount'], 0)}\n"
             else:
                 content += "Нет ресурсов\n"
 
@@ -212,7 +227,11 @@ class StatsView(discord.ui.View):
                 content += f"{EMOJI['weapon']} Вооружение: неизвестно\n"
                 content += f"{EMOJI['vehicle']} Военная техника: неизвестно\n"
 
-        await interaction.response.edit_message(content=header + content, view=self)
+        return header + content
+
+    async def show_section(self, interaction: discord.Interaction, section: str):
+        text = await self.build_section(section)
+        await interaction.response.edit_message(content=text, view=self)
 
     @discord.ui.button(label="Основные параметры", style=discord.ButtonStyle.primary)
     async def btn_main(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -260,7 +279,9 @@ class GameMenu(discord.ui.View):
     @discord.ui.button(label="💰 Ресурсы", style=discord.ButtonStyle.primary)
     async def resources_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         rows = await async_fetch_all("SELECT resource_name, amount FROM resources WHERE country_id=?", (self.country_id,))
-        text = "**Ваши ресурсы:**\n" + "\n".join([f"{r['resource_name']}: {format_number(r['amount'], 2)}" for r in rows])
+        text = "**Ваши ресурсы:**\n" + "\n".join(
+            [f"{r['resource_name']}: {format_number(r['amount'], 0)}" for r in rows]
+        )
         await interaction.response.edit_message(content=text, view=self)
 
     @discord.ui.button(label="🌍 Дипломатия", style=discord.ButtonStyle.primary)
@@ -391,8 +412,7 @@ class GovernmentView(discord.ui.View):
 
     @discord.ui.button(label="Изменить название", style=discord.ButtonStyle.primary)
     async def rename_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # здесь должна открываться модалка для ввода нового названия, но в рамках View проще использовать команду
-        await interaction.response.send_message("Используйте команду `/rename` (в разработке)", ephemeral=True)
+        await interaction.response.send_message("Используйте команду `/rename`", ephemeral=True)
 
     @discord.ui.button(label="Изменить религию", style=discord.ButtonStyle.primary)
     async def religion_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -408,7 +428,6 @@ class GovernmentView(discord.ui.View):
 
     @discord.ui.button(label="Мобилизация", style=discord.ButtonStyle.danger)
     async def mob_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Упрощённо: переключаем мобилизацию
         await async_execute("UPDATE countries SET mobilization = 1 - mobilization WHERE id=?", (self.country_id,))
         await interaction.response.send_message("Мобилизация переключена.", ephemeral=True)
 
@@ -453,7 +472,9 @@ class Game(commands.Cog):
     async def country_choose(self, interaction: discord.Interaction, country: str, ruler_name: str):
         existing = await async_fetch_one("SELECT name FROM countries WHERE owner_id=?", (interaction.user.id,))
         if existing:
-            await interaction.response.send_message(f"Вы уже управляете страной: {existing['name']}. Сначала откажитесь от неё.", ephemeral=True)
+            await interaction.response.send_message(
+                f"Вы уже управляете страной: {existing['name']}. Сначала откажитесь от неё.", ephemeral=True
+            )
             return
         row = await async_fetch_one("SELECT id, name FROM countries WHERE name=? AND owner_id IS NULL", (country,))
         if not row:
@@ -481,7 +502,9 @@ class Game(commands.Cog):
     async def game(self, interaction: discord.Interaction):
         row = await async_fetch_one("SELECT id FROM countries WHERE owner_id=?", (interaction.user.id,))
         if not row:
-            await interaction.response.send_message("Вы не управляете страной. Используйте `/country_choose`.", ephemeral=True)
+            await interaction.response.send_message(
+                "Вы не управляете страной. Используйте `/country_choose`.", ephemeral=True
+            )
             return
         await interaction.response.send_message("Главное меню", view=GameMenu(row['id']), ephemeral=True)
 
@@ -497,43 +520,39 @@ class Game(commands.Cog):
             remaining = int(86400 - (now - row['last_daily']))
             hours = remaining // 3600
             minutes = (remaining % 3600) // 60
-            await interaction.response.send_message(f"Бонус можно забрать через {hours} ч {minutes} мин.", ephemeral=True)
+            await interaction.response.send_message(
+                f"Бонус можно забрать через {hours} ч {minutes} мин.", ephemeral=True
+            )
             return
         bonus = {"Доллары": 500, "Продовольствие": 200, "Нефть": 100}
         for res, amount in bonus.items():
             await async_execute(
-                "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+                "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) "
+                "ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
                 (country_id, res, amount, amount)
             )
         await async_execute("UPDATE countries SET last_daily = ? WHERE id = ?", (now, country_id))
-        await interaction.response.send_message("Ежедневный бонус получен! +500$, +200 прод., +100 нефти.", ephemeral=True)
+        await interaction.response.send_message(
+            "Ежедневный бонус получен! +500$, +200 прод., +100 нефти.", ephemeral=True
+        )
 
     @app_commands.command(name="stats", description="Статистика страны")
     @app_commands.describe(member="Игрок (оставьте пустым для своей статистики)")
     async def stats(self, interaction: discord.Interaction, member: discord.Member = None):
-        if member is None:
-            target_user = interaction.user
-        else:
-            target_user = member
-
-        country = await async_fetch_one(
-            "SELECT * FROM countries WHERE owner_id=?",
-            (target_user.id,)
-        )
+        target_user = member or interaction.user
+        country = await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (target_user.id,))
         if not country:
             await interaction.response.send_message("Этот игрок не управляет страной.", ephemeral=True)
             return
         country = dict(country)
-        # Проверка союзника (пока заглушка: если смотрим свою страну или модератор, то is_ally=True)
+        # Проверка на союзника (пока владелец или админ)
         is_ally = (interaction.user.id == target_user.id) or interaction.user.guild_permissions.administrator
         view = StatsView(country, is_ally, target_user)
-        await view.show_section(interaction, "main")
-        # Сообщение уже отправлено через edit_message, но первый раз нужно отправить новое
-        await interaction.response.send_message("Загрузка...", view=view, ephemeral=True)
-        # Сразу покажем основной раздел (повторно, но уже с правильным content)
-        await view.show_section(interaction, "main")
+        # Сразу получаем содержимое основного раздела и отправляем
+        main_text = await view.build_section("main")
+        await interaction.response.send_message(main_text, view=view, ephemeral=True)
 
-    # Команды управления государством (заглушки)
+    # Команды управления государством
     @app_commands.command(name="rename", description="Изменить название страны")
     async def rename(self, interaction: discord.Interaction, new_name: str):
         row = await async_fetch_one("SELECT id FROM countries WHERE owner_id=?", (interaction.user.id,))
