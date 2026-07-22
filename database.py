@@ -99,8 +99,9 @@ def init_db():
         try:
             cur.execute(f"ALTER TABLE countries ADD COLUMN {col} {col_def}")
         except sqlite3.OperationalError:
-            pass  # колонка уже существует
+            pass
 
+    # Провинции
     cur.execute("""
         CREATE TABLE IF NOT EXISTS provinces (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,6 +110,7 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
+    # Постройки
     cur.execute("""
         CREATE TABLE IF NOT EXISTS buildings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,6 +121,7 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
+    # Ресурсы
     cur.execute("""
         CREATE TABLE IF NOT EXISTS resources (
             country_id INTEGER,
@@ -128,6 +131,7 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
+    # Технологии
     cur.execute("""
         CREATE TABLE IF NOT EXISTS technologies (
             country_id INTEGER,
@@ -137,16 +141,42 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
+    # Войны
     cur.execute("""
         CREATE TABLE IF NOT EXISTS wars (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             attacker_id INTEGER,
             defender_id INTEGER,
             status TEXT DEFAULT 'active',
+            start_time REAL,
             FOREIGN KEY (attacker_id) REFERENCES countries(id),
             FOREIGN KEY (defender_id) REFERENCES countries(id)
         )
     """)
+    # Дипломатические пакты (союзы, пакт о ненападении, торговый пакт)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_country INTEGER,
+            to_country INTEGER,
+            type TEXT,   -- 'alliance', 'non_aggression', 'trade'
+            accepted INTEGER DEFAULT 0,
+            FOREIGN KEY (from_country) REFERENCES countries(id),
+            FOREIGN KEY (to_country) REFERENCES countries(id)
+        )
+    """)
+    # Санкции
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sanctions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_country INTEGER,
+            to_country INTEGER,
+            description TEXT,
+            FOREIGN KEY (from_country) REFERENCES countries(id),
+            FOREIGN KEY (to_country) REFERENCES countries(id)
+        )
+    """)
+    # Альянсы (отдельные структуры)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS alliances (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
