@@ -47,7 +47,6 @@ def format_number(n, decimals=0):
     if decimals == 0:
         return f"{int(n):,}".replace(",", ".")
     else:
-        # Пример: 1234567.89 -> "1.234.567,89"
         return f"{n:,.{decimals}f}".replace(",", ".").replace(".", ",", 1)
 
 def get_color_circle(value):
@@ -102,7 +101,6 @@ class StatsView(discord.ui.View):
         name = country['display_name'] or country['name']
         ruler = country['ruler_name'] or "Неизвестный"
         flag_emoji = EMOJI.get('flag', '🏳️')
-        header = f"Статистика игрока {self.target_user.mention}\n{flag_emoji} {name}\n\n"
         nick = self.target_user.display_name if self.target_user else ruler
 
         def param_line(emoji, title, value, max_val=100, unknown=False, suffix=""):
@@ -114,22 +112,16 @@ class StatsView(discord.ui.View):
             else:
                 return f"{emoji} {title}: {value}{suffix}\n"
 
+        # Общий заголовок раздела (ник + флаг + страна)
+        header = f"**// {section.replace('_', ' ').title()}**\n{nick} | {flag_emoji} {name}\n\n"
+
         content = ""
         if section == "main":
-            content += f"**// Основные параметры**\n{nick} | {flag_emoji} {name}\n\n"
-            budget_row = await async_fetch_one(
-                "SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'",
-                (country['id'],)
-            )
-            budget_val = budget_row['amount'] if budget_row else 0
-            content += f"{EMOJI['budget']} Бюджет: {format_number(budget_val, 2)}$\n"
-            population = 0  # заглушка
-            content += f"{EMOJI['population']} Население: {format_number(population)} человек\n"
-            support = int(country['citizen_mood'])
-            content += f"{EMOJI['support']} Рейтинг поддержки правительства: {support}\n"
+            content += f"{EMOJI['budget']} Бюджет: {format_number(await self._get_budget(), 2)}$\n"
+            content += f"{EMOJI['population']} Население: {format_number(0)} человек\n"
+            content += f"{EMOJI['support']} Рейтинг поддержки правительства: {int(country['citizen_mood'])}\n"
 
         elif section == "development":
-            content += f"**// Развитие государства**\n{nick} | {flag_emoji} {name}\n\n"
             eco = country['economic_stability']
             health = country['health']
             ind = country['industry_level']
@@ -159,7 +151,6 @@ class StatsView(discord.ui.View):
             content += f"{EMOJI['growth']} Демографический рост: {growth:.2f}% (в год)\n"
 
         elif section == "international":
-            content += f"**// Международная арена**\n{nick} | {flag_emoji} {name}\n\n"
             aggr_text, aggr_circle = get_aggression_text(country['aggression_score'])
             content += f"{EMOJI['aggression']} Агрессия государства: {aggr_circle} {aggr_text}\n"
             prest_text, prest_circle = get_prestige_text(country['international_prestige'])
@@ -175,7 +166,6 @@ class StatsView(discord.ui.View):
             content += f"{EMOJI['sanction']} Санкции: нет\n"
 
         elif section == "territory":
-            content += f"**// Территория**\n{nick} | {flag_emoji} {name}\n\n"
             content += f"{EMOJI['colony']} Колонии: нет\n"
             provs = await async_fetch_all("SELECT name FROM provinces WHERE country_id=?", (country['id'],))
             if provs:
@@ -185,7 +175,6 @@ class StatsView(discord.ui.View):
                 content += f"{EMOJI['territory']} Регионы: нет\n"
 
         elif section == "buildings_info":
-            content += f"**// Строительство**\n{nick} | {flag_emoji} {name}\n\n"
             builds = await async_fetch_all(
                 "SELECT building_type, level FROM buildings WHERE country_id=? AND build_end_time=0 AND level>0",
                 (country['id'],)
@@ -206,7 +195,6 @@ class StatsView(discord.ui.View):
                 content += f"{EMOJI['buildings_icon']} Постройки: нет\n"
 
         elif section == "resources_info":
-            content += f"**// Ресурсы**\n{nick} | {flag_emoji} {name}\n\n"
             res = await async_fetch_all("SELECT resource_name, amount FROM resources WHERE country_id=?", (country['id'],))
             if res:
                 for r in res:
@@ -215,7 +203,6 @@ class StatsView(discord.ui.View):
                 content += "Нет ресурсов\n"
 
         elif section == "army":
-            content += f"**// Армия**\n{nick} | {flag_emoji} {name}\n\n"
             content += param_line(EMOJI['army_strength'], "Сила армии", country['combat_capability'])
             content += f"{EMOJI['army_count']} Численность армии: {format_number(0)} человек\n"
             if self.is_ally:
@@ -228,6 +215,13 @@ class StatsView(discord.ui.View):
                 content += f"{EMOJI['vehicle']} Военная техника: неизвестно\n"
 
         return header + content
+
+    async def _get_budget(self):
+        row = await async_fetch_one(
+            "SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'",
+            (self.country['id'],)
+        )
+        return row['amount'] if row else 0
 
     async def show_section(self, interaction: discord.Interaction, section: str):
         text = await self.build_section(section)
@@ -263,7 +257,7 @@ class StatsView(discord.ui.View):
 
 
 # ========================
-# VIEW СТРОИТЕЛЬСТВА (прежний BuildingsView, без автообновления)
+# VIEW СТРОИТЕЛЬСТВА И ПРОЧИЕ (без изменений)
 # ========================
 class GameMenu(discord.ui.View):
     def __init__(self, country_id):
@@ -545,12 +539,15 @@ class Game(commands.Cog):
             await interaction.response.send_message("Этот игрок не управляет страной.", ephemeral=True)
             return
         country = dict(country)
-        # Проверка на союзника (пока владелец или админ)
         is_ally = (interaction.user.id == target_user.id) or interaction.user.guild_permissions.administrator
         view = StatsView(country, is_ally, target_user)
-        # Сразу получаем содержимое основного раздела и отправляем
-        main_text = await view.build_section("main")
-        await interaction.response.send_message(main_text, view=view, ephemeral=True)
+
+        # Только заголовок без данных раздела
+        name = country['display_name'] or country['name']
+        flag_emoji = EMOJI.get('flag', '🏳️')
+        header = f"Статистика игрока {target_user.mention}\n{flag_emoji} {name}"
+
+        await interaction.response.send_message(header, view=view, ephemeral=True)
 
     # Команды управления государством
     @app_commands.command(name="rename", description="Изменить название страны")
