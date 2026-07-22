@@ -4,6 +4,7 @@ from discord import app_commands
 from database import get_conn, init_db
 from data.countries import initial_countries, initial_provinces
 import os
+import asyncio
 
 DB_PATH = "sovereign.db"
 
@@ -11,25 +12,23 @@ class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="init_game", description="Инициализировать игру (админ) – полностью пересоздаёт базу")
-    @app_commands.default_permissions(administrator=True)
-    async def init_game(self, interaction: discord.Interaction):
+    # Вспомогательная функция, выполняемая в фоновом потоке
+    def _init_game_sync(self):
+        """Синхронная часть инициализации (вызывается через asyncio.to_thread)"""
         conn = get_conn()
         cur = conn.cursor()
-
         tables = ["wars", "alliance_members", "alliances", "sanctions", "pacts",
                   "resources", "buildings", "provinces", "technologies", "countries"]
         for table in tables:
             cur.execute(f"DROP TABLE IF EXISTS {table}")
-
         conn.commit()
         conn.close()
-        init_db()  # создаст таблицы с новыми полями population, army_count
+
+        init_db()  # создаёт таблицы с колонками population, army_count
 
         conn = get_conn()
         cur = conn.cursor()
         for country_data in initial_countries:
-            # Добавляем population в запрос
             cur.execute(
                 "INSERT INTO countries (name, type, owner_id, display_name, aggression_score, population) VALUES (?, ?, ?, ?, ?, ?)",
                 (country_data['name'], country_data['type'], None, country_data['name'], 50, country_data['population'])
@@ -44,8 +43,9 @@ class Admin(commands.Cog):
                     "INSERT OR IGNORE INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?)",
                     (country_id, res, 1000)
                 )
-            branches = ['Военная доктрина', 'Вооружение и техника', 'Авиация и космос', 'Флот', 'Информационные технологии',
-                        'Медицина и биотехнологии', 'Энергетика', 'Промышленность', 'Сельское хозяйство', 'Транспорт и логистика',
+            branches = ['Военная доктрина', 'Вооружение и техника', 'Авиация и космос', 'Флот',
+                        'Информационные технологии', 'Медицина и биотехнологии', 'Энергетика',
+                        'Промышленность', 'Сельское хозяйство', 'Транспорт и логистика',
                         'Гражданское строительство', 'Финансы и экономика']
             for branch in branches:
                 cur.execute(
@@ -54,9 +54,22 @@ class Admin(commands.Cog):
                 )
         conn.commit()
         conn.close()
-        await interaction.response.send_message("Игра инициализирована! Все страны созданы, база пересоздана.", ephemeral=True)
+        return True
 
-    # ... остальные команды (backup, restore) без изменений
+    @app_commands.command(name="init_game", description="Инициализировать игру (админ) – полностью пересоздаёт базу")
+    @app_commands.default_permissions(administrator=True)
+    async def init_game(self, interaction: discord.Interaction):
+        # Мгновенно подтверждаем получение команды
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            # Запускаем тяжелую операцию в фоновом потоке
+            result = await asyncio.to_thread(self._init_game_sync)
+            if result:
+                await interaction.followup.send("✅ Игра инициализирована! Все страны созданы, база пересоздана.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при инициализации: {e}", ephemeral=True)
+
     @app_commands.command(name="backup", description="Сохранить базу данных (файл)")
     @app_commands.default_permissions(administrator=True)
     async def backup(self, interaction: discord.Interaction):
