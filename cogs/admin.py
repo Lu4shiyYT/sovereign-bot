@@ -26,7 +26,6 @@ class Admin(commands.Cog):
         cur.execute("DELETE FROM provinces")
         cur.execute("DELETE FROM technologies")
         cur.execute("DELETE FROM countries")
-
         for country_data in initial_countries:
             cur.execute(
                 "INSERT INTO countries (name, type, owner_id, display_name, aggression_score) VALUES (?, ?, ?, ?, ?)",
