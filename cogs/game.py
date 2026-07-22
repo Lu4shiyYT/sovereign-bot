@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 from database import async_fetch_all, async_fetch_one, async_execute
 import time
@@ -61,8 +61,12 @@ class GameMenu(discord.ui.View):
     @discord.ui.button(label="🏭 Постройки", style=discord.ButtonStyle.primary)
     async def buildings_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = BuildingsView(self.country_id)
+        # Сначала загружаем актуальные данные и создаём правильные кнопки
+        await view.initialize_buttons()
         await interaction.response.edit_message(content="Меню построек", view=view)
-        view.start_updating(interaction.message)
+        # Запускаем таймер, если есть активные строительства
+        if view.has_active_builds():
+            view.start_updating(interaction.message)
 
     @discord.ui.button(label="💰 Ресурсы", style=discord.ButtonStyle.primary)
     async def resources_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -84,24 +88,13 @@ class BuildingsView(discord.ui.View):
         self.country_id = country_id
         self.message = None
         self.update_task = None
-        self.add_buttons_sync()  # первичное заполнение кнопок синхронно, но без запросов к БД (асинхронно позже)
+        self.active = False   # есть ли активные стройки
 
-    def add_buttons_sync(self):
-        """Создаёт кнопки с заглушками, реальные данные загрузим асинхронно"""
+    async def initialize_buttons(self):
+        """Асинхронно загружает данные и создаёт кнопки с актуальными подписями."""
         self.clear_items()
-        for b_type in BUILDING_TYPES:
-            btn = discord.ui.Button(label=f"{b_type} (загрузка...)", style=discord.ButtonStyle.secondary, disabled=True, custom_id=b_type)
-            self.add_item(btn)
-        refresh_btn = discord.ui.Button(label="🔄 Обновить", style=discord.ButtonStyle.secondary)
-        refresh_btn.callback = self.refresh_callback
-        self.add_item(refresh_btn)
-        back_btn = discord.ui.Button(label="◀ Назад", style=discord.ButtonStyle.danger)
-        back_btn.callback = self.back_callback
-        self.add_item(back_btn)
-
-    async def refresh_data_and_buttons(self):
-        """Асинхронно получает данные из БД и перестраивает кнопки"""
         now = time.time()
+        self.active = False
         for b_type in BUILDING_TYPES:
             row = await async_fetch_one(
                 "SELECT level, build_end_time FROM buildings WHERE country_id=? AND building_type=?",
@@ -109,7 +102,7 @@ class BuildingsView(discord.ui.View):
             )
             level = 0 if row is None else row['level']
             end_time = row['build_end_time'] if row else 0
-            # Обновим кнопку
+
             if level >= 10:
                 label = f"{b_type} (макс.)"
                 disabled = True
@@ -117,18 +110,26 @@ class BuildingsView(discord.ui.View):
                 remaining = int(end_time - now)
                 label = f"{b_type} (стр-во {remaining}с)"
                 disabled = True
+                self.active = True
             else:
                 next_level = level + 1
                 label = f"{b_type} (ур.{level} → {next_level})"
                 disabled = False
-            # Ищем кнопку по custom_id
-            for child in self.children:
-                if isinstance(child, discord.ui.Button) and child.custom_id == b_type:
-                    child.label = label
-                    child.disabled = disabled
-                    if not hasattr(child, 'callback') or child.callback is None:
-                        child.callback = self.make_callback(b_type)
-                    break
+
+            btn = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, disabled=disabled, custom_id=b_type)
+            btn.callback = self.make_callback(b_type)
+            self.add_item(btn)
+
+        refresh_btn = discord.ui.Button(label="🔄 Обновить", style=discord.ButtonStyle.secondary)
+        refresh_btn.callback = self.refresh_callback
+        self.add_item(refresh_btn)
+
+        back_btn = discord.ui.Button(label="◀ Назад", style=discord.ButtonStyle.danger)
+        back_btn.callback = self.back_callback
+        self.add_item(back_btn)
+
+    def has_active_builds(self):
+        return self.active
 
     def start_updating(self, message: discord.Message):
         self.message = message
@@ -137,26 +138,62 @@ class BuildingsView(discord.ui.View):
         self.update_task = asyncio.create_task(self.auto_update())
 
     async def auto_update(self):
+        """Фоновый цикл: сразу обновляет, потом каждую секунду проверяет таймеры."""
         try:
             while True:
-                await asyncio.sleep(1)
-                if self.message is None:
-                    break
-                # Обновляем данные и кнопки
+                # Сначала обновляем данные и перерисовываем кнопки
                 await self.refresh_data_and_buttons()
-                try:
-                    await self.message.edit(view=self)
-                except discord.NotFound:
+                if self.message:
+                    try:
+                        await self.message.edit(view=self)
+                    except discord.NotFound:
+                        break
+                    except discord.HTTPException as e:
+                        # временно выводим ошибку в канал, где было открыто меню
+                        await self.message.channel.send(f"Ошибка обновления меню: {e}")
+                # Если больше нет активных строек — останавливаем автообновление
+                if not self.active:
                     break
-                except discord.HTTPException:
-                    pass
+                await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            if self.message:
+                await self.message.channel.send(f"Критическая ошибка автообновления: {e}")
+            raise
+
+    async def refresh_data_and_buttons(self):
+        """Загружает свежие данные из БД и обновляет надписи на кнопках."""
+        now = time.time()
+        self.active = False
+        for child in self.children:
+            if isinstance(child, discord.ui.Button) and child.custom_id in BUILDING_TYPES:
+                b_type = child.custom_id
+                row = await async_fetch_one(
+                    "SELECT level, build_end_time FROM buildings WHERE country_id=? AND building_type=?",
+                    (self.country_id, b_type)
+                )
+                level = 0 if row is None else row['level']
+                end_time = row['build_end_time'] if row else 0
+
+                if level >= 10:
+                    child.label = f"{b_type} (макс.)"
+                    child.disabled = True
+                elif end_time > now:
+                    remaining = int(end_time - now)
+                    child.label = f"{b_type} (стр-во {remaining}с)"
+                    child.disabled = True
+                    self.active = True
+                else:
+                    next_level = level + 1
+                    child.label = f"{b_type} (ур.{level} → {next_level})"
+                    child.disabled = False
 
     async def refresh_callback(self, interaction: discord.Interaction):
         await self.refresh_data_and_buttons()
         await interaction.response.edit_message(view=self)
-        self.start_updating(interaction.message)
+        if self.has_active_builds():
+            self.start_updating(interaction.message)
 
     async def back_callback(self, interaction: discord.Interaction):
         if self.update_task and not self.update_task.done():
@@ -166,7 +203,6 @@ class BuildingsView(discord.ui.View):
     def make_callback(self, building_type):
         async def callback(interaction: discord.Interaction):
             now = time.time()
-            # Асинхронно проверяем постройку
             row = await async_fetch_one(
                 "SELECT level, build_end_time FROM buildings WHERE country_id=? AND building_type=?",
                 (self.country_id, building_type)
@@ -182,7 +218,6 @@ class BuildingsView(discord.ui.View):
                 return
 
             cost = get_build_cost(building_type, current_level)
-            # Проверяем ресурсы асинхронно
             for res, amount in cost.items():
                 res_row = await async_fetch_one(
                     "SELECT amount FROM resources WHERE country_id=? AND resource_name=?",
@@ -192,7 +227,6 @@ class BuildingsView(discord.ui.View):
                     await interaction.response.send_message(f"Недостаточно {res}!", ephemeral=True)
                     return
 
-            # Списываем ресурсы
             for res, amount in cost.items():
                 await async_execute(
                     "UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?",
@@ -213,10 +247,10 @@ class BuildingsView(discord.ui.View):
                     (self.country_id, building_type, current_level, end_time)
                 )
 
-            # Обновляем кнопки и перезапускаем таймер
             await self.refresh_data_and_buttons()
             await interaction.response.edit_message(view=self)
-            self.start_updating(interaction.message)
+            if self.has_active_builds():
+                self.start_updating(interaction.message)
 
         return callback
 
