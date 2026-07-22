@@ -205,5 +205,16 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sanctions_to ON sanctions(to_country)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_alliance_members_country ON alliance_members(country_id)")
 
+    # Новые колонки для населения и армии
+    new_columns_army = {
+        'population': 'INTEGER DEFAULT 1000000',
+        'army_size': 'INTEGER DEFAULT 0'
+    }
+    for col, col_def in new_columns_army.items():
+        try:
+            cur.execute(f"ALTER TABLE countries ADD COLUMN {col} {col_def}")
+        except sqlite3.OperationalError:
+            pass
+    
     conn.commit()
     conn.close()
