@@ -120,7 +120,7 @@ def get_prestige_text(score):
         return "Сверхвлиятельный", "🔵"
 
 # ========================
-# VIEW ДЛЯ СТАТИСТИКИ
+# VIEW ДЛЯ СТАТИСТИКИ (оптимизировано)
 # ========================
 class StatsView(discord.ui.View):
     def __init__(self, country_data, is_ally, target_user):
@@ -180,68 +180,105 @@ class StatsView(discord.ui.View):
             prest_text, prest_circle = get_prestige_text(country['international_prestige'])
             content += f"{EMOJI['prestige']} Международный авторитет: {prest_circle} {prest_text}\n"
 
-            # Войны – загружаем врагов одним запросом с JOIN
-            wars = await async_fetch_all(
-                "SELECT DISTINCT c2.name AS enemy_name FROM wars w "
-                "JOIN countries c2 ON (c2.id = CASE WHEN w.attacker_id = ? THEN w.defender_id ELSE w.attacker_id END) "
-                "WHERE (w.attacker_id = ? OR w.defender_id = ?) AND w.status = 'active'",
-                (country['id'], country['id'], country['id'])
-            )
+            # Один запрос для всех международных связей
+            intl_data = await async_fetch_all("""
+                SELECT
+                    'war' AS category,
+                    NULL AS partner_name,
+                    NULL AS ptype,
+                    NULL AS subtype,
+                    NULL AS sanc_type,
+                    NULL AS sanc_desc,
+                    NULL AS from_name,
+                    c2.name AS enemy_name
+                FROM wars w
+                JOIN countries c2 ON (c2.id = CASE WHEN w.attacker_id = ? THEN w.defender_id ELSE w.attacker_id END)
+                WHERE (w.attacker_id = ? OR w.defender_id = ?) AND w.status = 'active'
+                UNION ALL
+                SELECT
+                    'pact' AS category,
+                    c2.name AS partner_name,
+                    p.type AS ptype,
+                    p.subtype AS subtype,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL
+                FROM pacts p
+                JOIN countries c2 ON (c2.id = CASE WHEN p.from_country = ? THEN p.to_country ELSE p.from_country END)
+                WHERE (p.from_country = ? OR p.to_country = ?) AND p.accepted = 1
+                UNION ALL
+                SELECT
+                    'alliance' AS category,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    a.name
+                FROM alliances a
+                JOIN alliance_members am ON a.id = am.alliance_id
+                WHERE am.country_id = ?
+                UNION ALL
+                SELECT
+                    'sanction' AS category,
+                    NULL,
+                    NULL,
+                    NULL,
+                    s.sanction_type,
+                    s.description,
+                    c2.name AS from_name,
+                    NULL
+                FROM sanctions s
+                JOIN countries c2 ON s.from_country = c2.id
+                WHERE s.to_country = ?
+            """, (country['id'], country['id'], country['id'], country['id'], country['id'], country['id'], country['id'], country['id']))
+
+            wars = []
+            pacts = []
+            alliances = []
+            sanctions = []
+
+            for row in intl_data:
+                cat = row['category']
+                if cat == 'war':
+                    wars.append(row['enemy_name'])
+                elif cat == 'pact':
+                    pacts.append((row['ptype'], row['subtype'], row['partner_name']))
+                elif cat == 'alliance':
+                    alliances.append(row['enemy_name'])  # в этом столбце имя альянса
+                elif cat == 'sanction':
+                    sanctions.append((row['sanc_type'], row['sanc_desc'], row['from_name']))
+
             if wars:
-                enemies = [w['enemy_name'] for w in wars]
-                content += f"{EMOJI['war_status']} В состоянии войны: да (против: {', '.join(enemies)})\n"
+                content += f"{EMOJI['war_status']} В состоянии войны: да (против: {', '.join(wars)})\n"
             else:
                 content += f"{EMOJI['war_status']} В состоянии войны: нет\n"
 
             content += f"{EMOJI['dependency']} Зависимость: независимое\n"
 
-            # Пакты и союзы – загружаем сразу с именами партнёров
             if self.is_ally:
-                pacts = await async_fetch_all(
-                    "SELECT p.type, p.subtype, c2.name AS partner_name FROM pacts p "
-                    "JOIN countries c2 ON (c2.id = CASE WHEN p.from_country = ? THEN p.to_country ELSE p.from_country END) "
-                    "WHERE (p.from_country = ? OR p.to_country = ?) AND p.accepted = 1",
-                    (country['id'], country['id'], country['id'])
-                )
-                allies = []
-                trade = []
-                for p in pacts:
-                    if p['type'] == 'alliance':
-                        allies.append(f"{p['partner_name']} ({p['subtype']})")
-                    elif p['type'] == 'trade':
-                        trade.append(p['partner_name'])
+                allies = [f"{name} ({subtype})" for ptype, subtype, name in pacts if ptype == 'alliance']
+                trade = [name for ptype, subtype, name in pacts if ptype == 'trade']
                 content += f"{EMOJI['alliance']} Союзы: {', '.join(allies) if allies else 'нет'}\n"
                 content += f"{EMOJI['alliance']} Торговые партнёры: {', '.join(trade) if trade else 'нет'}\n"
-            else:
-                content += f"{EMOJI['alliance']} Союзы: неизвестно\n"
-                content += f"{EMOJI['alliance']} Торговые партнёры: неизвестно\n"
 
-            # Альянсы
-            if self.is_ally:
-                alliances = await async_fetch_all(
-                    "SELECT a.name FROM alliances a JOIN alliance_members am ON a.id = am.alliance_id WHERE am.country_id = ?",
-                    (country['id'],)
-                )
                 if alliances:
-                    content += f"{EMOJI['alliance']} Альянсы: " + ", ".join([a['name'] for a in alliances]) + "\n"
+                    content += f"{EMOJI['alliance']} Альянсы: {', '.join(alliances)}\n"
                 else:
                     content += f"{EMOJI['alliance']} Альянсы: нет\n"
             else:
+                content += f"{EMOJI['alliance']} Союзы: неизвестно\n"
+                content += f"{EMOJI['alliance']} Торговые партнёры: неизвестно\n"
                 content += f"{EMOJI['alliance']} Альянсы: неизвестно\n"
 
-            # Санкции
-            sanctions = await async_fetch_all(
-                "SELECT s.sanction_type, s.description, c2.name AS from_name FROM sanctions s "
-                "JOIN countries c2 ON s.from_country = c2.id "
-                "WHERE s.to_country = ?",
-                (country['id'],)
-            )
             if sanctions:
                 content += "**Санкции:**\n"
-                for s in sanctions:
-                    line = f"{EMOJI['sanction']} {s['sanction_type']}: {s['description']}"
-                    if s['from_name']:
-                        line += f" – от {s['from_name']}"
+                for stype, desc, from_name in sanctions:
+                    line = f"{EMOJI['sanction']} {stype}: {desc}"
+                    if from_name:
+                        line += f" – от {from_name}"
                     content += line + "\n"
             else:
                 content += "**Санкции:** нет\n"
@@ -826,7 +863,6 @@ class Game(commands.Cog):
         amount = stype['amount']
         desc = stype['desc'] if not description else description
 
-        # Безопасно применяем эффект: получаем текущее значение, обновляем
         current_val_row = await async_fetch_one(f"SELECT {param} FROM countries WHERE id=?", (target_country['id'],))
         if current_val_row is None:
             await interaction.response.send_message("Ошибка получения параметра страны.", ephemeral=True)
@@ -855,7 +891,6 @@ class Game(commands.Cog):
             await interaction.response.send_message("Санкция с таким ID не найдена или вы не её инициатор.", ephemeral=True)
             return
 
-        # Восстанавливаем параметр
         current_val_row = await async_fetch_one(f"SELECT {sanction['affected_param']} FROM countries WHERE id=?", (sanction['to_country'],))
         if current_val_row:
             current_val = current_val_row[sanction['affected_param']]
