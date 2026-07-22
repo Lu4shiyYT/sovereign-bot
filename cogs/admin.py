@@ -9,7 +9,7 @@ class Admin(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="init_game", description="Инициализировать игру (админ)")
-    # @app_commands.default_permissions(administrator=True)
+    @app_commands.default_permissions(administrator=True)
     async def init_game(self, interaction: discord.Interaction):
         conn = get_conn()
         cur = conn.cursor()
