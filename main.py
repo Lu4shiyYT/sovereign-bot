@@ -4,6 +4,7 @@ import os
 from config import BATTLE_ROUND_INTERVAL_MINUTES
 from keep_alive import keep_alive
 from database import init_db, async_fetch_all, async_execute
+from database import async_get_game_date
 import datetime
 import time
 
@@ -101,6 +102,16 @@ async def monthly_income():
             except:
                 pass
 
+        # Инкремент игровой даты
+        game_date = await async_get_game_date()
+        next_date = game_date + datetime.timedelta(days=1)
+        await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1", (next_date.day, next_date.month, next_date.year))
+        # Обновление названия голосового канала
+        voice_channel_id = 1529236474896322583
+        channel = bot.get_channel(voice_channel_id)
+        if channel and isinstance(channel, discord.VoiceChannel):
+            await channel.edit(name=f"📅 {next_date.strftime('%d.%m.%Y')}")
+            
 @bot.command(name="sync")
 @commands.is_owner()
 async def sync_commands(ctx):
