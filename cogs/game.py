@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from database import async_fetch_all, async_fetch_one, async_execute
 from data.buildings import BUILDING_TYPES
+from config import CHANNEL_IDS, COUNTRY_ROLE_IDS
 import time
 import datetime
 import random
@@ -60,9 +61,15 @@ SANCTION_TYPES = {
     "machinery_embargo": {"param": "industry_level", "amount": 3, "desc": "Эмбарго на оборудование"},
 }
 
+# Доступные ресурсы (для автодополнения)
+RESOURCE_NAMES = [
+    "Доллары", "Нефть", "Природный газ", "Уголь", "Железная руда",
+    "Продовольствие", "Древесина", "Пресная вода"
+]
+
 pending_alliance_invites = {}
 
-# Варианты новостей для мобилизации
+# Новостные шаблоны
 MOBILIZE_ON_NEWS = [
     "⚡️ СРОЧНАЯ НОВОСТЬ: В стране {country} объявлена всеобщая мобилизация! Правитель {ruler} призвал граждан к оружию.",
     "📢 Экстренное сообщение: {country} переходит на военное положение. {ruler} подписал указ о мобилизации.",
@@ -78,7 +85,6 @@ MOBILIZE_OFF_NEWS = [
     "🏳️ {country} возвращается к мирной жизни. Мобилизационные мероприятия прекращены."
 ]
 
-# Варианты новостей для ленд-лиза (деньги)
 LENDLEASE_MONEY_NEWS = [
     "💰 {sender} оказал финансовую помощь {receiver} в размере {amount} долларов.",
     "🤝 {sender} перевел {amount}$ стране {receiver}.",
@@ -736,8 +742,7 @@ class GovernmentView(discord.ui.View):
 
     @discord.ui.button(label="Мобилизация", style=discord.ButtonStyle.danger)
     async def mob_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await async_execute("UPDATE countries SET mobilization = 1 - mobilization WHERE id=?", (self.country_id,))
-        await interaction.response.send_message("Мобилизация переключена.", ephemeral=True)
+        await interaction.response.send_message("Используйте команду `/mobilize`.", ephemeral=True)
 
     @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -783,6 +788,7 @@ class MarketMenuView(discord.ui.View):
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
 
+
 # ========================
 # КОГ С КОМАНДАМИ
 # ========================
@@ -793,6 +799,10 @@ class Game(commands.Cog):
     async def country_autocomplete(self, interaction: discord.Interaction, current: str):
         rows = await async_fetch_all("SELECT name FROM countries WHERE owner_id IS NULL AND name LIKE ?", (f"{current}%",))
         return [app_commands.Choice(name=row['name'], value=row['name']) for row in rows]
+
+    async def resource_autocomplete(self, interaction: discord.Interaction, current: str):
+        choices = [res for res in RESOURCE_NAMES if current.lower() in res.lower()]
+        return [app_commands.Choice(name=res, value=res) for res in choices]
 
     async def _get_country(self, user_id):
         return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
@@ -810,11 +820,12 @@ class Game(commands.Cog):
         if country and country['owner_id']:
             await self._notify_user(country['owner_id'], message)
 
-    async def _get_or_create_channel(self, guild, channel_name):
-        channel = discord.utils.get(guild.text_channels, name=channel_name)
-        if channel is None:
-            channel = await guild.create_text_channel(channel_name)
-        return channel
+    async def _send_to_channel(self, channel_id, message):
+        if not channel_id:
+            return
+        channel = self.bot.get_channel(channel_id)
+        if channel:
+            await channel.send(message)
 
     # --- Основные команды ---
     @app_commands.command(name="country_choose", description="Выбрать свободную страну и правителя")
@@ -833,12 +844,23 @@ class Game(commands.Cog):
             "UPDATE countries SET owner_id=?, ruler_name=?, display_name=? WHERE id=?",
             (interaction.user.id, ruler_name, country, row['id'])
         )
-        reg_channel = discord.utils.get(interaction.guild.text_channels, name="регистрация-стран")
-        if reg_channel is None:
-            reg_channel = await interaction.guild.create_text_channel("регистрация-стран")
-            await reg_channel.set_permissions(interaction.guild.default_role, read_messages=True, send_messages=False)
-        if reg_channel:
-            await reg_channel.send(f"{interaction.user.mention} теперь управляет страной **{country}** как правитель **{ruler_name}**.")
+
+        # Выдача роли при регистрации
+        role_id = COUNTRY_ROLE_IDS.get(country)
+        if role_id:
+            role = interaction.guild.get_role(role_id)
+            if role:
+                try:
+                    await interaction.user.add_roles(role)
+                except:
+                    pass
+
+        # Отправка в канал регистраций по ID
+        reg_channel_id = CHANNEL_IDS.get("registration")
+        if reg_channel_id:
+            reg_channel = self.bot.get_channel(reg_channel_id)
+            if reg_channel:
+                await reg_channel.send(f"{interaction.user.mention} теперь управляет страной **{country}** как правитель **{ruler_name}**.")
         await interaction.response.send_message(f"Вы теперь управляете страной **{country}** как **{ruler_name}**! Используйте `/game`.", ephemeral=True)
 
     @app_commands.command(name="country_leave", description="Отказаться от управления страной")
@@ -847,6 +869,15 @@ class Game(commands.Cog):
         if not row:
             await interaction.response.send_message("Вы не управляете ни одной страной.", ephemeral=True)
             return
+        # Снятие роли
+        role_id = COUNTRY_ROLE_IDS.get(row['name'])
+        if role_id:
+            role = interaction.guild.get_role(role_id)
+            if role:
+                try:
+                    await interaction.user.remove_roles(role)
+                except:
+                    pass
         await async_execute("UPDATE countries SET owner_id=NULL, ruler_name='' WHERE id=?", (row['id'],))
         await interaction.response.send_message(f"Вы отказались от управления страной **{row['name']}**.", ephemeral=True)
 
@@ -1288,7 +1319,7 @@ class Game(commands.Cog):
                 await self._notify_country_owner(m['country_id'], f"Альянс **{alliance['name']}** был распущен лидером.")
         await interaction.response.send_message(f"Альянс '{alliance['name']}' распущен.", ephemeral=True)
 
-    # --- ВОЙНА ---
+    # --- ВОЙНА (с новостями о начале и конце) ---
     @app_commands.command(name="declare_war", description="Объявить войну стране")
     async def declare_war(self, interaction: discord.Interaction, target: discord.Member):
         if target.id == interaction.user.id:
@@ -1321,16 +1352,15 @@ class Game(commands.Cog):
         defender_army = target_country['army_count']
 
         date_str = datetime.datetime.now().strftime("%d.%m.%Y")
-        war_channel = discord.utils.get(interaction.guild.text_channels, name="военные-сводки")
-        if war_channel:
-            message = (
-                f"# Объявление войны\n\n"
-                f"Сегодня, {date_str}, **{attacker_name}** под руководством **{attacker_ruler}** объявило войну **{defender_name}**.\n\n"
-                f"**Дата начала вооружённого конфликта:** {date_str}\n"
-                f"**Силы сторон:** {attacker_name} ({attacker_strength}) vs {defender_name} ({defender_strength})\n"
-                f"**Численность сторон:** {attacker_name} ({format_number(attacker_army)}) vs {defender_name} ({format_number(defender_army)})"
-            )
-            await war_channel.send(message)
+        # Новость о начале войны
+        war_msg = (
+            f"# ⚔️ Объявление войны\n\n"
+            f"Сегодня, {date_str}, **{attacker_name}** под руководством **{attacker_ruler}** объявило войну **{defender_name}**.\n\n"
+            f"**Дата начала вооружённого конфликта:** {date_str}\n"
+            f"**Силы сторон:** {attacker_name} ({attacker_strength}) vs {defender_name} ({defender_strength})\n"
+            f"**Численность сторон:** {attacker_name} ({format_number(attacker_army)}) vs {defender_name} ({format_number(defender_army)})"
+        )
+        await self._send_to_channel(CHANNEL_IDS.get("war_reports"), war_msg)
 
         try:
             await target.send(f"{interaction.user.mention} объявил вам войну от страны **{attacker_name}**!")
@@ -1356,11 +1386,256 @@ class Game(commands.Cog):
             await interaction.response.send_message("Вы не находитесь в состоянии войны с этой страной.", ephemeral=True)
             return
         await async_execute("UPDATE wars SET status='ended' WHERE id=?", (war['id'],))
+
+        # Новость о мире
+        date_str = datetime.datetime.now().strftime("%d.%m.%Y")
+        peace_msg = (
+            f"# 🕊️ Мирный договор\n\n"
+            f"Сегодня, {date_str}, **{my_country['name']}** и **{target_country['name']}** заключили мир. Военные действия прекращены."
+        )
+        await self._send_to_channel(CHANNEL_IDS.get("war_reports"), peace_msg)
+
         try:
             await target.send(f"{interaction.user.mention} предложил мир от страны **{my_country['name']}**. Война окончена.")
         except discord.Forbidden:
             pass
         await interaction.response.send_message(f"Мир заключён с {target_country['name']}.", ephemeral=True)
+
+    # --- МОБИЛИЗАЦИЯ (с кулдауном и новостями) ---
+    @app_commands.command(name="mobilize", description="Переключить мобилизацию (макс. 2 раза в день по МСК)")
+    async def mobilize(self, interaction: discord.Interaction):
+        country = await self._get_country(interaction.user.id)
+        if not country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+
+        today = datetime.datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d")
+        cooldown = await async_fetch_one("SELECT count FROM mobilize_cooldowns WHERE user_id=? AND date=?", (interaction.user.id, today))
+        current_uses = cooldown['count'] if cooldown else 0
+        if current_uses >= 2:
+            await interaction.response.send_message("❌ Вы исчерпали лимит переключений мобилизации на сегодня (2 раза).", ephemeral=True)
+            return
+
+        new_mob = 1 - country['mobilization']
+        await async_execute("UPDATE countries SET mobilization=? WHERE id=?", (new_mob, country['id']))
+
+        if cooldown:
+            await async_execute("UPDATE mobilize_cooldowns SET count = count + 1 WHERE user_id=? AND date=?", (interaction.user.id, today))
+        else:
+            await async_execute("INSERT INTO mobilize_cooldowns (user_id, date, count) VALUES (?, ?, 1)", (interaction.user.id, today))
+
+        # Новость в канал "новости"
+        news_channel_id = CHANNEL_IDS.get("news")
+        country_name = country['display_name'] or country['name']
+        ruler_name = country['ruler_name'] or "Неизвестный правитель"
+        if new_mob == 1:
+            template = random.choice(MOBILIZE_ON_NEWS)
+        else:
+            template = random.choice(MOBILIZE_OFF_NEWS)
+        news_text = template.format(country=country_name, ruler=ruler_name)
+        if news_channel_id:
+            channel = self.bot.get_channel(news_channel_id)
+            if channel:
+                await channel.send(news_text)
+
+        state = "включена" if new_mob else "выключена"
+        await interaction.response.send_message(f"Мобилизация {state}. (Осталось переключений сегодня: {1 - current_uses})", ephemeral=True)
+
+    # --- ПЕРЕВОД ДЕНЕГ ---
+    @app_commands.command(name="send_money", description="Перевести деньги другой стране")
+    @app_commands.describe(target="Игрок-получатель", amount="Сумма в долларах")
+    async def send_money(self, interaction: discord.Interaction, target: discord.Member, amount: int):
+        if target.id == interaction.user.id:
+            await interaction.response.send_message("Нельзя перевести деньги самому себе.", ephemeral=True)
+            return
+        if amount <= 0:
+            await interaction.response.send_message("Сумма должна быть положительной.", ephemeral=True)
+            return
+        sender_country = await self._get_country(interaction.user.id)
+        if not sender_country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+        receiver_country = await self._get_country(target.id)
+        if not receiver_country:
+            await interaction.response.send_message("Этот игрок не управляет страной.", ephemeral=True)
+            return
+
+        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (sender_country['id'],))
+        if not money_row or money_row['amount'] < amount:
+            await interaction.response.send_message("Недостаточно денег для перевода.", ephemeral=True)
+            return
+
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (amount, sender_country['id']))
+        await async_execute(
+            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+            (receiver_country['id'], amount, amount)
+        )
+
+        # Новость в ленд-лиз
+        channel_id = CHANNEL_IDS.get("lendlease")
+        sender_name = sender_country['display_name'] or sender_country['name']
+        receiver_name = receiver_country['display_name'] or receiver_country['name']
+        sender_mention = interaction.user.mention
+        receiver_mention = target.mention
+        template = random.choice(LENDLEASE_MONEY_NEWS)
+        news_msg = template.format(sender=f"**{sender_name}** ({sender_mention})", receiver=f"**{receiver_name}** ({receiver_mention})", amount=format_number(amount, 0))
+        if channel_id:
+            channel = self.bot.get_channel(channel_id)
+            if channel:
+                await channel.send(news_msg)
+
+        await interaction.response.send_message(f"✅ Переведено {format_number(amount, 0)}$ стране **{receiver_name}**.", ephemeral=True)
+
+    # --- ПЕРЕВОД РЕСУРСОВ ---
+    @app_commands.command(name="send_resource", description="Передать ресурс другой стране")
+    @app_commands.describe(target="Игрок-получатель", resource="Название ресурса", amount="Количество")
+    @app_commands.autocomplete(resource=Game.resource_autocomplete)
+    async def send_resource(self, interaction: discord.Interaction, target: discord.Member, resource: str, amount: int):
+        if target.id == interaction.user.id:
+            await interaction.response.send_message("Нельзя переслать ресурс самому себе.", ephemeral=True)
+            return
+        if amount <= 0:
+            await interaction.response.send_message("Количество должно быть положительным.", ephemeral=True)
+            return
+        sender_country = await self._get_country(interaction.user.id)
+        if not sender_country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+        receiver_country = await self._get_country(target.id)
+        if not receiver_country:
+            await interaction.response.send_message("Этот игрок не управляет страной.", ephemeral=True)
+            return
+
+        res_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name=?", (sender_country['id'], resource))
+        if not res_row or res_row['amount'] < amount:
+            await interaction.response.send_message(f"У вас недостаточно ресурса '{resource}'.", ephemeral=True)
+            return
+
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?", (amount, sender_country['id'], resource))
+        await async_execute(
+            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+            (receiver_country['id'], resource, amount, amount)
+        )
+
+        channel_id = CHANNEL_IDS.get("lendlease")
+        sender_name = sender_country['display_name'] or sender_country['name']
+        receiver_name = receiver_country['display_name'] or receiver_country['name']
+        sender_mention = interaction.user.mention
+        receiver_mention = target.mention
+        template = random.choice(LENDLEASE_RESOURCE_NEWS)
+        news_msg = template.format(sender=f"**{sender_name}** ({sender_mention})", receiver=f"**{receiver_name}** ({receiver_mention})", amount=amount, resource=resource)
+        if channel_id:
+            channel = self.bot.get_channel(channel_id)
+            if channel:
+                await channel.send(news_msg)
+
+        await interaction.response.send_message(f"✅ Передано {amount} ед. '{resource}' стране **{receiver_name}**.", ephemeral=True)
+
+    # --- РЫНОК (группа команд) ---
+    market = app_commands.Group(name="market", description="Торговля на рынке")
+
+    @market.command(name="sell", description="Выставить ресурс на продажу")
+    @app_commands.describe(resource="Название ресурса", amount="Количество", price="Цена за весь лот (в долларах)")
+    @app_commands.autocomplete(resource=Game.resource_autocomplete)
+    async def market_sell(self, interaction: discord.Interaction, resource: str, amount: int, price: int):
+        if amount <= 0 or price <= 0:
+            await interaction.response.send_message("Количество и цена должны быть положительными.", ephemeral=True)
+            return
+        country = await self._get_country(interaction.user.id)
+        if not country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+
+        active_lots = await async_fetch_one("SELECT COUNT(*) as cnt FROM market WHERE seller_id=? AND sold=0", (country['id'],))
+        if active_lots['cnt'] >= 15:
+            await interaction.response.send_message("❌ У вас уже максимальное количество активных лотов (15).", ephemeral=True)
+            return
+
+        res_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name=?", (country['id'], resource))
+        if not res_row or res_row['amount'] < amount:
+            await interaction.response.send_message(f"У вас недостаточно ресурса '{resource}'.", ephemeral=True)
+            return
+
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?", (amount, country['id'], resource))
+        await async_execute("INSERT INTO market (seller_id, resource_name, amount, price, sold) VALUES (?, ?, ?, ?, 0)", (country['id'], resource, amount, price))
+        lot_id_row = await async_fetch_one("SELECT last_insert_rowid() as id", ())
+        lot_id = lot_id_row['id'] if lot_id_row else "?"
+        await interaction.response.send_message(f"✅ Вы выставили на рынок {amount} ед. '{resource}' за {price}$ (лот #{lot_id}).", ephemeral=True)
+
+    @market.command(name="buy", description="Купить лот на рынке")
+    @app_commands.describe(lot_id="ID лота")
+    async def market_buy(self, interaction: discord.Interaction, lot_id: int):
+        buyer_country = await self._get_country(interaction.user.id)
+        if not buyer_country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+
+        lot = await async_fetch_one("SELECT * FROM market WHERE id=? AND sold=0", (lot_id,))
+        if not lot:
+            await interaction.response.send_message("Лот не найден или уже продан.", ephemeral=True)
+            return
+        if lot['seller_id'] == buyer_country['id']:
+            await interaction.response.send_message("Нельзя купить свой собственный лот.", ephemeral=True)
+            return
+
+        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (buyer_country['id'],))
+        if not money_row or money_row['amount'] < lot['price']:
+            await interaction.response.send_message("Недостаточно денег для покупки.", ephemeral=True)
+            return
+
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (lot['price'], buyer_country['id']))
+        await async_execute(
+            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+            (lot['seller_id'], lot['price'], lot['price'])
+        )
+        await async_execute(
+            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+            (buyer_country['id'], lot['resource_name'], lot['amount'], lot['amount'])
+        )
+        await async_execute("UPDATE market SET sold=1 WHERE id=?", (lot_id,))
+
+        seller_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?", (lot['seller_id'],))
+        if seller_country:
+            seller_user = self.bot.get_user(seller_country['owner_id'])
+            if seller_user:
+                try:
+                    await seller_user.send(f"💰 Ваш лот #{lot_id} ({lot['resource_name']} x{lot['amount']}) продан за {lot['price']}$.")
+                except:
+                    pass
+
+        await interaction.response.send_message(f"✅ Вы купили лот #{lot_id}: {lot['resource_name']} x{lot['amount']} за {lot['price']}$.", ephemeral=True)
+
+    @market.command(name="list", description="Показать список активных лотов на рынке")
+    async def market_list(self, interaction: discord.Interaction):
+        lots = await async_fetch_all("SELECT id, resource_name, amount, price, seller_id FROM market WHERE sold=0")
+        if not lots:
+            content = "На рынке нет активных предложений."
+        else:
+            content = "**Активные лоты на рынке:**\n"
+            for lot in lots:
+                seller_country = await async_fetch_one("SELECT name FROM countries WHERE id=?", (lot['seller_id'],))
+                seller_name = seller_country['name'] if seller_country else "Неизвестно"
+                content += f"#{lot['id']}: {lot['resource_name']} x{lot['amount']} за {lot['price']}$ (продавец: {seller_name})\n"
+        await interaction.response.send_message(content, ephemeral=True)
+
+    @market.command(name="cancel", description="Снять свой лот с рынка")
+    @app_commands.describe(lot_id="ID лота")
+    async def market_cancel(self, interaction: discord.Interaction, lot_id: int):
+        country = await self._get_country(interaction.user.id)
+        if not country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+        lot = await async_fetch_one("SELECT * FROM market WHERE id=? AND seller_id=? AND sold=0", (lot_id, country['id']))
+        if not lot:
+            await interaction.response.send_message("Лот не найден, уже продан или не принадлежит вам.", ephemeral=True)
+            return
+
+        await async_execute(
+            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+            (country['id'], lot['resource_name'], lot['amount'], lot['amount'])
+        )
+        await async_execute("DELETE FROM market WHERE id=?", (lot_id,))
+        await interaction.response.send_message(f"✅ Лот #{lot_id} снят с продажи, ресурс '{lot['resource_name']}' возвращён.", ephemeral=True)
 
     # --- УПРАВЛЕНИЕ ГОСУДАРСТВОМ ---
     @app_commands.command(name="rename", description="Изменить название страны")
@@ -1398,236 +1673,6 @@ class Game(commands.Cog):
             return
         await async_execute("UPDATE countries SET government_form=? WHERE id=?", (form, country['id']))
         await interaction.response.send_message(f"Форма правления изменена на {form}.", ephemeral=True)
-
-    @app_commands.command(name="mobilize", description="Переключить мобилизацию (макс. 2 раза в день)")
-    async def mobilize(self, interaction: discord.Interaction):
-        country = await self._get_country(interaction.user.id)
-        if not country:
-            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
-            return
-    
-        # Проверка кулдауна
-        today = datetime.datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d")
-        cooldown = await async_fetch_one(
-            "SELECT count FROM mobilize_cooldowns WHERE user_id=? AND date=?",
-            (interaction.user.id, today)
-        )
-        current_uses = cooldown['count'] if cooldown else 0
-        if current_uses >= 2:
-            await interaction.response.send_message("❌ Вы исчерпали лимит переключений мобилизации на сегодня (2 раза).", ephemeral=True)
-            return
-    
-        # Переключение состояния
-        new_mob = 1 - country['mobilization']
-        await async_execute("UPDATE countries SET mobilization=? WHERE id=?", (new_mob, country['id']))
-    
-        # Обновление счётчика кулдауна
-        if cooldown:
-            await async_execute("UPDATE mobilize_cooldowns SET count = count + 1 WHERE user_id=? AND date=?", (interaction.user.id, today))
-        else:
-            await async_execute("INSERT INTO mobilize_cooldowns (user_id, date, count) VALUES (?, ?, 1)", (interaction.user.id, today))
-    
-        # Новость в канал "новости"
-        news_channel = await self._get_or_create_channel(interaction.guild, "новости")
-        country_name = country['display_name'] or country['name']
-        ruler_name = country['ruler_name'] or "Неизвестный правитель"
-        if new_mob == 1:  # мобилизация включена
-            template = random.choice(MOBILIZE_ON_NEWS)
-        else:
-            template = random.choice(MOBILIZE_OFF_NEWS)
-        news_text = template.format(country=country_name, ruler=ruler_name)
-        if news_channel:
-            await news_channel.send(news_text)
-    
-        state = "включена" if new_mob else "выключена"
-        await interaction.response.send_message(f"Мобилизация {state}. (Осталось переключений сегодня: {1 - current_uses})", ephemeral=True)
-
-    # --- ПЕРЕВОД ДЕНЕГ МЕЖДУ ИГРОКАМИ ---
-    @app_commands.command(name="send_money", description="Перевести деньги другой стране")
-    @app_commands.describe(target="Игрок-получатель", amount="Сумма в долларах")
-    async def send_money(self, interaction: discord.Interaction, target: discord.Member, amount: int):
-        if target.id == interaction.user.id:
-            await interaction.response.send_message("Нельзя перевести деньги самому себе.", ephemeral=True)
-            return
-        if amount <= 0:
-            await interaction.response.send_message("Сумма должна быть положительной.", ephemeral=True)
-            return
-        sender_country = await self._get_country(interaction.user.id)
-        if not sender_country:
-            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
-            return
-        receiver_country = await self._get_country(target.id)
-        if not receiver_country:
-            await interaction.response.send_message("Этот игрок не управляет страной.", ephemeral=True)
-            return
-    
-        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (sender_country['id'],))
-        if not money_row or money_row['amount'] < amount:
-            await interaction.response.send_message("Недостаточно денег для перевода.", ephemeral=True)
-            return
-    
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (amount, sender_country['id']))
-        await async_execute(
-            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
-            (receiver_country['id'], amount, amount)
-        )
-    
-        channel = await self._get_or_create_channel(interaction.guild, "Ленд-лиз")
-        sender_name = sender_country['display_name'] or sender_country['name']
-        receiver_name = receiver_country['display_name'] or receiver_country['name']
-        sender_mention = interaction.user.mention
-        receiver_mention = target.mention
-        template = random.choice(LENDLEASE_MONEY_NEWS)
-        news_msg = template.format(sender=f"**{sender_name}** ({sender_mention})", receiver=f"**{receiver_name}** ({receiver_mention})", amount=format_number(amount, 0))
-        if channel:
-            await channel.send(news_msg)
-    
-        await interaction.response.send_message(f"✅ Переведено {format_number(amount, 0)}$ стране **{receiver_name}**.", ephemeral=True)
-    
-    # --- ПЕРЕВОД РЕСУРСОВ МЕЖДУ ИГРОКАМИ ---
-    @app_commands.command(name="send_resource", description="Передать ресурс другой стране")
-    @app_commands.describe(target="Игрок-получатель", resource="Название ресурса", amount="Количество")
-    async def send_resource(self, interaction: discord.Interaction, target: discord.Member, resource: str, amount: int):
-        if target.id == interaction.user.id:
-            await interaction.response.send_message("Нельзя переслать ресурс самому себе.", ephemeral=True)
-            return
-        if amount <= 0:
-            await interaction.response.send_message("Количество должно быть положительным.", ephemeral=True)
-            return
-        sender_country = await self._get_country(interaction.user.id)
-        if not sender_country:
-            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
-            return
-        receiver_country = await self._get_country(target.id)
-        if not receiver_country:
-            await interaction.response.send_message("Этот игрок не управляет страной.", ephemeral=True)
-            return
-    
-        res_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name=?", (sender_country['id'], resource))
-        if not res_row or res_row['amount'] < amount:
-            await interaction.response.send_message(f"У вас недостаточно ресурса '{resource}'.", ephemeral=True)
-            return
-    
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?", (amount, sender_country['id'], resource))
-        await async_execute(
-            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
-            (receiver_country['id'], resource, amount, amount)
-        )
-    
-        channel = await self._get_or_create_channel(interaction.guild, "Ленд-лиз")
-        sender_name = sender_country['display_name'] or sender_country['name']
-        receiver_name = receiver_country['display_name'] or receiver_country['name']
-        sender_mention = interaction.user.mention
-        receiver_mention = target.mention
-        template = random.choice(LENDLEASE_RESOURCE_NEWS)
-        news_msg = template.format(sender=f"**{sender_name}** ({sender_mention})", receiver=f"**{receiver_name}** ({receiver_mention})", amount=amount, resource=resource)
-        if channel:
-            await channel.send(news_msg)
-    
-        await interaction.response.send_message(f"✅ Передано {amount} ед. '{resource}' стране **{receiver_name}**.", ephemeral=True)
-    
-    # --- РЫНОК ---
-    market = app_commands.Group(name="market", description="Торговля на рынке")
-    
-    @market.command(name="sell", description="Выставить ресурс на продажу")
-    @app_commands.describe(resource="Название ресурса", amount="Количество", price="Цена за весь лот (в долларах)")
-    async def market_sell(self, interaction: discord.Interaction, resource: str, amount: int, price: int):
-        if amount <= 0 or price <= 0:
-            await interaction.response.send_message("Количество и цена должны быть положительными.", ephemeral=True)
-            return
-        country = await self._get_country(interaction.user.id)
-        if not country:
-            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
-            return
-    
-        active_lots = await async_fetch_one("SELECT COUNT(*) as cnt FROM market WHERE seller_id=? AND sold=0", (country['id'],))
-        if active_lots['cnt'] >= 15:
-            await interaction.response.send_message("❌ У вас уже максимальное количество активных лотов (15).", ephemeral=True)
-            return
-    
-        res_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name=?", (country['id'], resource))
-        if not res_row or res_row['amount'] < amount:
-            await interaction.response.send_message(f"У вас недостаточно ресурса '{resource}'.", ephemeral=True)
-            return
-    
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?", (amount, country['id'], resource))
-        await async_execute("INSERT INTO market (seller_id, resource_name, amount, price, sold) VALUES (?, ?, ?, ?, 0)", (country['id'], resource, amount, price))
-        await interaction.response.send_message(f"✅ Вы выставили на рынок {amount} ед. '{resource}' за {price}$ (лот #{ (await async_fetch_one('SELECT last_insert_rowid() as id', ()))['id'] }).", ephemeral=True)
-    
-    @market.command(name="buy", description="Купить лот на рынке")
-    @app_commands.describe(lot_id="ID лота")
-    async def market_buy(self, interaction: discord.Interaction, lot_id: int):
-        buyer_country = await self._get_country(interaction.user.id)
-        if not buyer_country:
-            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
-            return
-    
-        lot = await async_fetch_one("SELECT * FROM market WHERE id=? AND sold=0", (lot_id,))
-        if not lot:
-            await interaction.response.send_message("Лот не найден или уже продан.", ephemeral=True)
-            return
-        if lot['seller_id'] == buyer_country['id']:
-            await interaction.response.send_message("Нельзя купить свой собственный лот.", ephemeral=True)
-            return
-    
-        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (buyer_country['id'],))
-        if not money_row or money_row['amount'] < lot['price']:
-            await interaction.response.send_message("Недостаточно денег для покупки.", ephemeral=True)
-            return
-    
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (lot['price'], buyer_country['id']))
-        await async_execute(
-            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
-            (lot['seller_id'], lot['price'], lot['price'])
-        )
-        await async_execute(
-            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
-            (buyer_country['id'], lot['resource_name'], lot['amount'], lot['amount'])
-        )
-        await async_execute("UPDATE market SET sold=1 WHERE id=?", (lot_id,))
-    
-        seller_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?", (lot['seller_id'],))
-        if seller_country:
-            seller_user = self.bot.get_user(seller_country['owner_id'])
-            if seller_user:
-                try:
-                    await seller_user.send(f"💰 Ваш лот #{lot_id} ({lot['resource_name']} x{lot['amount']}) продан за {lot['price']}$.")
-                except:
-                    pass
-    
-        await interaction.response.send_message(f"✅ Вы купили лот #{lot_id}: {lot['resource_name']} x{lot['amount']} за {lot['price']}$.", ephemeral=True)
-    
-    @market.command(name="list", description="Показать список активных лотов на рынке")
-    async def market_list(self, interaction: discord.Interaction):
-        lots = await async_fetch_all("SELECT id, resource_name, amount, price, seller_id FROM market WHERE sold=0")
-        if not lots:
-            content = "На рынке нет активных предложений."
-        else:
-            content = "**Активные лоты на рынке:**\n"
-            for lot in lots:
-                seller_country = await async_fetch_one("SELECT name FROM countries WHERE id=?", (lot['seller_id'],))
-                seller_name = seller_country['name'] if seller_country else "Неизвестно"
-                content += f"#{lot['id']}: {lot['resource_name']} x{lot['amount']} за {lot['price']}$ (продавец: {seller_name})\n"
-        await interaction.response.send_message(content, ephemeral=True)
-    
-    @market.command(name="cancel", description="Снять свой лот с рынка")
-    @app_commands.describe(lot_id="ID лота")
-    async def market_cancel(self, interaction: discord.Interaction, lot_id: int):
-        country = await self._get_country(interaction.user.id)
-        if not country:
-            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
-            return
-        lot = await async_fetch_one("SELECT * FROM market WHERE id=? AND seller_id=? AND sold=0", (lot_id, country['id']))
-        if not lot:
-            await interaction.response.send_message("Лот не найден, уже продан или не принадлежит вам.", ephemeral=True)
-            return
-    
-        await async_execute(
-            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
-            (country['id'], lot['resource_name'], lot['amount'], lot['amount'])
-        )
-        await async_execute("DELETE FROM market WHERE id=?", (lot_id,))
-        await interaction.response.send_message(f"✅ Лот #{lot_id} снят с продажи, ресурс '{lot['resource_name']}' возвращён.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Game(bot))
