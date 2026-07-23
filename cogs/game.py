@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from database import async_fetch_all, async_fetch_one, async_execute
+from database import async_fetch_all, async_fetch_one, async_execute, async_get_game_date
 from data.buildings import BUILDING_TYPES
 try:
     from config import CHANNEL_IDS
@@ -12,9 +12,20 @@ import datetime
 import random
 from zoneinfo import ZoneInfo
 
+# Импорт ID из конфига (если нет — пустые словари)
+try:
+    from config import CATEGORY_IDS, IDEOLOGY_ROLES, GOVERNMENT_ROLES, RELIGION_ROLES, DEFAULT_PLAYER_ROLE_ID, COUNTRY_ROLES
+except ImportError:
+    CATEGORY_IDS = {}
+    IDEOLOGY_ROLES = {}
+    GOVERNMENT_ROLES = {}
+    RELIGION_ROLES = {}
+    DEFAULT_PLAYER_ROLE_ID = 0
+    COUNTRY_ROLES = {}
+
 # Доступные ресурсы
 RESOURCE_NAMES = [
-    "Доллары", "Нефть", "Природный газ", "Уголь", "Железная руда",
+    "Нефть", "Природный газ", "Уголь", "Железная руда",
     "Продовольствие", "Древесина", "Пресная вода"
 ]
 
@@ -69,6 +80,66 @@ SANCTION_TYPES = {
     "textile_embargo": {"param": "economic_stability", "amount": 2, "desc": "Текстильное эмбарго"},
     "machinery_embargo": {"param": "industry_level", "amount": 3, "desc": "Эмбарго на оборудование"},
 }
+
+SANCTION_CHOICES = [
+    app_commands.Choice(name="Торговое эмбарго", value="trade_embargo"),
+    app_commands.Choice(name="Оружейное эмбарго", value="arms_embargo"),
+    app_commands.Choice(name="Запрет на поездки", value="travel_ban"),
+    app_commands.Choice(name="Визовый бан", value="visa_ban"),
+    app_commands.Choice(name="Финансовые санкции", value="financial_sanctions"),
+    app_commands.Choice(name="Заморозка активов", value="asset_freeze"),
+    app_commands.Choice(name="Дипломатическая изоляция", value="diplomatic_isolation"),
+    app_commands.Choice(name="Спортивная изоляция", value="sport_isolation"),
+    app_commands.Choice(name="Культурный бан", value="cultural_ban"),
+    app_commands.Choice(name="Технологическое эмбарго", value="technology_ban"),
+    app_commands.Choice(name="Продовольственное эмбарго", value="food_embargo"),
+    app_commands.Choice(name="Эмбарго на медикаменты", value="medicine_embargo"),
+    app_commands.Choice(name="Энергетическое эмбарго", value="energy_embargo"),
+    app_commands.Choice(name="Запрет на торговлю оружием", value="arms_trade_ban"),
+    app_commands.Choice(name="Нефтяное эмбарго", value="oil_embargo"),
+    app_commands.Choice(name="Газовое эмбарго", value="gas_embargo"),
+    app_commands.Choice(name="Угольное эмбарго", value="coal_embargo"),
+    app_commands.Choice(name="Алмазное эмбарго", value="diamond_embargo"),
+    app_commands.Choice(name="Золотое эмбарго", value="gold_embargo"),
+    app_commands.Choice(name="Урановое эмбарго", value="uranium_embargo"),
+    app_commands.Choice(name="Эмбарго на древесину", value="timber_embargo"),
+    app_commands.Choice(name="Текстильное эмбарго", value="textile_embargo"),
+    app_commands.Choice(name="Эмбарго на оборудование", value="machinery_embargo")
+]
+
+# Для выбора религии/правительства/идеологии
+RELIGION_CHOICES = [
+    app_commands.Choice(name="Христианство", value="Христианство"),
+    app_commands.Choice(name="Ислам", value="Ислам"),
+    app_commands.Choice(name="Иудаизм", value="Иудаизм"),
+    app_commands.Choice(name="Буддизм", value="Буддизм"),
+    app_commands.Choice(name="Индуизм", value="Индуизм"),
+    app_commands.Choice(name="Светское государство", value="Светское государство"),
+    app_commands.Choice(name="Запрет на религию", value="Запрет на религию")
+]
+
+GOVERNMENT_CHOICES = [
+    app_commands.Choice(name="Президентская республика", value="Президентская республика"),
+    app_commands.Choice(name="Парламентская республика", value="Парламентская республика"),
+    app_commands.Choice(name="Смешанная республика", value="Смешанная республика"),
+    app_commands.Choice(name="Конституционная монархия", value="Конституционная монархия"),
+    app_commands.Choice(name="Абсолютная монархия", value="Абсолютная монархия"),
+    app_commands.Choice(name="Дуалистическая монархия", value="Дуалистическая монархия"),
+    app_commands.Choice(name="Теократия", value="Теократия"),
+    app_commands.Choice(name="Однопартийная республика", value="Однопартийная республика")
+]
+
+IDEOLOGY_CHOICES = [
+    app_commands.Choice(name="Либерализм", value="Либерализм"),
+    app_commands.Choice(name="Национализм", value="Национализм"),
+    app_commands.Choice(name="Социал-демократия", value="Социал-демократия"),
+    app_commands.Choice(name="Коммунизм", value="Коммунизм"),
+    app_commands.Choice(name="Демократия", value="Демократия"),
+    app_commands.Choice(name="Консерватизм", value="Консерватизм"),
+    app_commands.Choice(name="Национал-демократия", value="Национал-демократия"),
+    app_commands.Choice(name="Монархизм", value="Монархизм"),
+    app_commands.Choice(name="Анархизм", value="Анархизм")
+]
 
 pending_alliance_invites = {}
 
@@ -877,6 +948,17 @@ class Game(commands.Cog):
             (interaction.user.id, ruler_name, country, row['id'])
         )
 
+        # Выдача ролей
+        country_role_id = COUNTRY_ROLES.get(country)
+        if country_role_id:
+            role = interaction.guild.get_role(country_role_id)
+            if role:
+                await interaction.user.add_roles(role)
+        if DEFAULT_PLAYER_ROLE_ID:
+            role = interaction.guild.get_role(DEFAULT_PLAYER_ROLE_ID)
+            if role:
+                await interaction.user.add_roles(role)
+
         # Отправка в канал регистраций: сначала по ID из конфига, иначе по имени
         reg_channel_id = CHANNEL_IDS.get("registration")
         if reg_channel_id:
@@ -893,8 +975,18 @@ class Game(commands.Cog):
         if not row:
             await interaction.response.send_message("Вы не управляете ни одной страной.", ephemeral=True)
             return
+        # Снятие ролей
+        country_role_id = COUNTRY_ROLES.get(row['name'])
+        if country_role_id:
+            role = interaction.guild.get_role(country_role_id)
+            if role:
+                await interaction.user.remove_roles(role)
+        if DEFAULT_PLAYER_ROLE_ID:
+            role = interaction.guild.get_role(DEFAULT_PLAYER_ROLE_ID)
+            if role:
+                await interaction.user.remove_roles(role)
         await async_execute("UPDATE countries SET owner_id=NULL, ruler_name='' WHERE id=?", (row['id'],))
-        await interaction.response.send_message(f"Вы отказались от управления страной **{row['name']}**.", ephemeral=True)
+        await interaction.response.send_message(f"Вы отказались от управления страной **{row['name']}**.")
 
     @app_commands.command(name="game", description="Открыть главное меню управления страной")
     async def game(self, interaction: discord.Interaction):
@@ -1101,6 +1193,24 @@ class Game(commands.Cog):
                 await interaction.response.send_message("Вы уже участвуете в максимальном количестве союзов (10).", ephemeral=True)
                 return
         await async_execute("UPDATE pacts SET accepted=1 WHERE id=?", (pact_id,))
+        if proposal['type'] == 'alliance':
+            guild = interaction.guild
+            partner1 = await async_fetch_one("SELECT name FROM countries WHERE id=?", (proposal['from_country'],))
+            partner2 = my_country
+            channel_name = f"союз-{partner1['name']}-{partner2['name']}"
+            cat_id = CATEGORY_IDS.get("pact")
+            category = guild.get_channel(cat_id) if cat_id else None
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            }
+            from_owner = await async_fetch_one("SELECT owner_id FROM countries WHERE id=?", (proposal['from_country'],))
+            if from_owner and from_owner['owner_id']:
+                member = guild.get_member(from_owner['owner_id'])
+                if member:
+                    overwrites[member] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
+        
         from_country = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?", (proposal['from_country'],))
         if from_country:
             await self._notify_user(from_country['owner_id'], f"Ваше предложение пакта **{proposal['type']}** было **принято** страной **{my_country['name']}**.")
@@ -1124,7 +1234,8 @@ class Game(commands.Cog):
         await interaction.response.send_message(f"Все пакты с {target_country['name']} расторгнуты.", ephemeral=True)
 
     @app_commands.command(name="impose_sanction", description="Наложить санкции (выберите тип)")
-    @app_commands.describe(target="Страна (игрок)", sanction_type="Тип санкции", description="Описание")
+    @app_commands.describe(target="Страна (игрок)", description="Описание")
+    @app_commands.choices(sanction_type=SANCTION_CHOICES)
     async def impose_sanction(self, interaction: discord.Interaction, target: discord.Member, sanction_type: str, description: str = ""):
         if target.id == interaction.user.id:
             await interaction.response.send_message("Нельзя наложить санкции на самого себя.", ephemeral=True)
@@ -1364,7 +1475,8 @@ class Game(commands.Cog):
         attacker_army = my_country['army_count']
         defender_army = target_country['army_count']
 
-        date_str = datetime.datetime.now().strftime("%d.%m.%Y")
+        game_date = await async_get_game_date()
+        date_str = game_date.strftime("%d.%m.%Y")
         # Случайная новость о начале войны
         news_template = random.choice(WAR_START_NEWS)
         news_msg = news_template.format(attacker=attacker_name, attacker_ruler=attacker_ruler, defender=defender_name, defender_ruler=defender_ruler)
@@ -1410,7 +1522,8 @@ class Game(commands.Cog):
             return
         await async_execute("UPDATE wars SET status='ended' WHERE id=?", (war['id'],))
 
-        date_str = datetime.datetime.now().strftime("%d.%m.%Y")
+        game_date = await async_get_game_date()
+        date_str = game_date.strftime("%d.%m.%Y")
         # Случайная новость о мире
         peace_template = random.choice(WAR_PEACE_NEWS)
         peace_msg = peace_template.format(country1=my_country['name'], country2=target_country['name'])
@@ -1676,13 +1789,15 @@ class Game(commands.Cog):
         await interaction.response.send_message(f"Название страны изменено на {new_name}.", ephemeral=True)
 
     @app_commands.command(name="set_religion", description="Установить государственную религию")
+    @app_commands.choices(religion=RELIGION_CHOICES)
     async def set_religion(self, interaction: discord.Interaction, religion: str):
         country = await self._get_country(interaction.user.id)
         if not country:
             await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
             return
         await async_execute("UPDATE countries SET religion=? WHERE id=?", (religion, country['id']))
-        await interaction.response.send_message(f"Религия изменена на {religion}.", ephemeral=True)
+        await self._update_role(interaction.user, RELIGION_ROLES, religion)
+        await interaction.response.send_message(f"✅ Государственная религия изменена на **{religion}**.", ephemeral=True)
 
     @app_commands.command(name="set_ideology", description="Установить государственную идеологию")
     async def set_ideology(self, interaction: discord.Interaction, ideology: str):
@@ -1701,6 +1816,24 @@ class Game(commands.Cog):
             return
         await async_execute("UPDATE countries SET government_form=? WHERE id=?", (form, country['id']))
         await interaction.response.send_message(f"Форма правления изменена на {form}.", ephemeral=True)
+
+async def _update_role(self, member: discord.Member, role_dict: dict, new_value: str):
+    """Убирает все роли из role_dict и выдаёт роль для new_value."""
+    for role_name, role_id in role_dict.items():
+        if role_id:
+            role = member.guild.get_role(role_id)
+            if role and role in member.roles:
+                try:
+                    await member.remove_roles(role)
+                except:
+                    pass
+    if new_value in role_dict and role_dict[new_value]:
+        role = member.guild.get_role(role_dict[new_value])
+        if role:
+            try:
+                await member.add_roles(role)
+            except:
+                pass
 
 async def setup(bot):
     await bot.add_cog(Game(bot))
