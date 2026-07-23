@@ -8,11 +8,12 @@ TICKS_PER_MONTH = HOURS_PER_MONTH * 3600
 BATTLE_ROUND_INTERVAL_MINUTES = 30
 BATTLE_RESPONSE_TIMEOUT_MINUTES = 10
 
-# ID каналов на сервере (замени на реальные)
-REGISTRATION_CHANNEL_ID = 1529514703737323643   # "регистрация-стран"
-NEWS_CHANNEL_ID         = 1529793621925040238   # "новости"
-WAR_CHANNEL_ID          = 1529796638963400835   # "военные-сводки"
-LENDLEASE_CHANNEL_ID    = 1529796191548604536   # "Ленд-лиз"
+CHANNEL_IDS = {
+    "registration": 1529514703737323643,   # замени 0 на ID канала регистраций, если есть
+    "news": 1529793621925040238,           # ID канала с новостями
+    "lendlease": 1529796191548604536,      # ID канала ленд-лиза
+    "war_reports": 1529796638963400835     # ID канала военных сводок
+}
 
 # COUNTRY_ROLE_IDS = {
 #    "Сомали": 111111111111111111,
