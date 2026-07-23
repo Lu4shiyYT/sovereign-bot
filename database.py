@@ -100,6 +100,38 @@ def init_db():
         'population': 'INTEGER DEFAULT 0',
         'army_count': 'INTEGER DEFAULT 0'
     }
+    # Новые столбцы для стран
+    for col, col_def in {
+        'army_count': 'INTEGER DEFAULT 0',
+        'religion': 'TEXT DEFAULT ""',
+        'government_form': 'TEXT DEFAULT ""',
+        'ideology': 'TEXT DEFAULT ""',
+        'bot_strength': 'INTEGER DEFAULT 1',
+        'budget': 'REAL DEFAULT 0'
+    }.items():
+        try:
+            cur.execute(f"ALTER TABLE countries ADD COLUMN {col} {col_def}")
+        except sqlite3.OperationalError:
+            pass
+
+    # Таблица для игровой даты
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS game_date (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            year INTEGER DEFAULT 2000,
+            month INTEGER DEFAULT 1,
+            day INTEGER DEFAULT 1
+        )
+    """)
+    # Таблица для хода войны
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS war_battles (
+            war_id INTEGER PRIMARY KEY,
+            last_battle_time REAL,
+            FOREIGN KEY (war_id) REFERENCES wars(id)
+        )
+    """)
+    
     for col, col_def in new_columns.items():
         try:
             cur.execute(f"ALTER TABLE countries ADD COLUMN {col} {col_def}")
