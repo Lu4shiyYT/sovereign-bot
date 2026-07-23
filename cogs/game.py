@@ -1018,6 +1018,11 @@ class Game(commands.Cog):
         await async_execute("UPDATE countries SET last_daily = ? WHERE id = ?", (now, country['id']))
         await interaction.response.send_message("Ежедневный бонус получен! +500$, +200 прод., +100 нефти.", ephemeral=True)
 
+    @app_commands.command(name="date", description="Показать текущую игровую дату")
+    async def show_date(self, interaction: discord.Interaction):
+        game_date = await async_get_game_date()
+        await interaction.response.send_message(f"📅 Текущая игровая дата: {game_date.strftime('%d.%m.%Y')}", ephemeral=True)
+
     @app_commands.command(name="stats", description="Статистика страны")
     @app_commands.describe(member="Игрок (оставьте пустым для своей статистики)")
     async def stats(self, interaction: discord.Interaction, member: discord.Member = None):
@@ -1800,6 +1805,7 @@ class Game(commands.Cog):
         await interaction.response.send_message(f"✅ Государственная религия изменена на **{religion}**.", ephemeral=True)
 
     @app_commands.command(name="set_ideology", description="Установить государственную идеологию")
+    @app_commands.choices(ideology=IDEOLOGY_CHOICES)
     async def set_ideology(self, interaction: discord.Interaction, ideology: str):
         country = await self._get_country(interaction.user.id)
         if not country:
@@ -1809,6 +1815,7 @@ class Game(commands.Cog):
         await interaction.response.send_message(f"Идеология изменена на {ideology}.", ephemeral=True)
 
     @app_commands.command(name="set_government", description="Установить форму правления")
+    @app_commands.choices(form=GOVERNMENT_CHOICES)
     async def set_government(self, interaction: discord.Interaction, form: str):
         country = await self._get_country(interaction.user.id)
         if not country:
