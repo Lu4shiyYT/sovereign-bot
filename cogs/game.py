@@ -3,7 +3,10 @@ from discord.ext import commands
 from discord import app_commands
 from database import async_fetch_all, async_fetch_one, async_execute
 from data.buildings import BUILDING_TYPES
-from config import CHANNEL_IDS
+try:
+    from config import CHANNEL_IDS
+except ImportError:
+    CHANNEL_IDS = {}
 import time
 import datetime
 import random
