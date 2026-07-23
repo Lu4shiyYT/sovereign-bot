@@ -76,6 +76,109 @@ class Admin(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка при инициализации: {e}", ephemeral=True)
 
+    import discord
+from discord.ext import commands
+from discord import app_commands
+from database import get_conn, init_db, async_fetch_one, async_execute
+from data.countries import initial_countries, initial_provinces
+import os
+import asyncio
+import datetime
+
+DB_PATH = "sovereign.db"
+
+RESOURCE_NAMES = [
+    "Нефть", "Природный газ", "Уголь", "Железная руда",
+    "Продовольствие", "Древесина", "Пресная вода"
+]
+
+class Admin(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    async def resource_autocomplete(self, interaction: discord.Interaction, current: str):
+        choices = [res for res in RESOURCE_NAMES if current.lower() in res.lower()]
+        return [app_commands.Choice(name=res, value=res) for res in choices]
+
+    def _init_game_sync(self):
+        conn = get_conn()
+        cur = conn.cursor()
+        tables = ["wars", "alliance_members", "alliances", "sanctions", "pacts",
+                  "resources", "buildings", "provinces", "technologies", "countries",
+                  "mobilize_cooldowns", "market", "game_date", "war_battles"]
+        for table in tables:
+            cur.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.commit()
+        conn.close()
+
+        init_db()
+
+        conn = get_conn()
+        cur = conn.cursor()
+        for country_data in initial_countries:
+            cur.execute(
+                "INSERT INTO countries (name, type, owner_id, display_name, aggression_score, population, army_count, religion, government_form, ideology, bot_strength, budget) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (country_data['name'], country_data['type'], None, country_data['name'], 50,
+                 country_data['population'], country_data['army'], country_data['religion'],
+                 country_data['government'], country_data['ideology'], country_data['bot_strength'],
+                 country_data['budget'])
+            )
+            country_id = cur.lastrowid
+            # Ресурсы
+            for res in RESOURCE_NAMES:
+                cur.execute(
+                    "INSERT OR IGNORE INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?)",
+                    (country_id, res, 1000)
+                )
+            # Деньги отдельно
+            cur.execute(
+                "INSERT OR IGNORE INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?)",
+                (country_id, country_data['budget'])
+            )
+            # Провинции
+            provinces = initial_provinces.get(country_data['name'], [country_data['name']])
+            for pname in provinces:
+                cur.execute("INSERT INTO provinces (name, country_id) VALUES (?, ?)", (pname, country_id))
+            # Технологии
+            branches = ['Военная доктрина', 'Вооружение и техника', 'Авиация и космос', 'Флот',
+                        'Информационные технологии', 'Медицина и биотехнологии', 'Энергетика',
+                        'Промышленность', 'Сельское хозяйство', 'Транспорт и логистика',
+                        'Гражданское строительство', 'Финансы и экономика']
+            for branch in branches:
+                cur.execute(
+                    "INSERT OR IGNORE INTO technologies (country_id, branch, level) VALUES (?, ?, 0)",
+                    (country_id, branch)
+                )
+        # Установка начальной игровой даты
+        cur.execute("INSERT OR IGNORE INTO game_date (id, year, month, day) VALUES (1, 2000, 1, 1)")
+        conn.commit()
+        conn.close()
+        return True
+
+    @app_commands.command(name="init_game", description="Инициализировать игру (админ) – полностью пересоздаёт базу")
+    @app_commands.default_permissions(administrator=True)
+    async def init_game(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            result = await asyncio.to_thread(self._init_game_sync)
+            if result:
+                await interaction.followup.send("✅ Игра инициализирована! Все страны созданы, база пересоздана.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при инициализации: {e}", ephemeral=True)
+
+    @app_commands.command(name="set_date", description="Установить игровую дату (админ)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(day="День", month="Месяц", year="Год")
+    async def set_date(self, interaction: discord.Interaction, day: int, month: int, year: int):
+        try:
+            datetime.date(year, month, day)  # проверка корректности
+        except ValueError:
+            await interaction.response.send_message("Некорректная дата.", ephemeral=True)
+            return
+        await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1", (day, month, year))
+        await interaction.response.send_message(f"✅ Игровая дата установлена: {day:02d}.{month:02d}.{year}", ephemeral=True)
+
     @app_commands.command(name="backup", description="Сохранить базу данных (файл)")
     @app_commands.default_permissions(administrator=True)
     async def backup(self, interaction: discord.Interaction):
