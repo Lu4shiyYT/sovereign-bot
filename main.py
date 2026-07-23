@@ -33,6 +33,8 @@ async def on_ready():
     print("Синхронизация команд выполнена.")
     if not monthly_income.is_running():
         monthly_income.start()
+    if not battle_loop.is_running():
+        battle_loop.start()
 
 # --- Фоновая задача: месячный доход (каждые 2 часа = 1 игровой месяц) ---
 @tasks.loop(hours=2)
@@ -102,6 +104,33 @@ async def monthly_income():
 async def sync_commands(ctx):
     await bot.tree.sync()
     await ctx.send("Команды синхронизированы.")
+
+# Боевой цикл
+@tasks.loop(minutes=BATTLE_ROUND_INTERVAL_MINUTES)
+async def battle_loop():
+    active_wars = await async_fetch_all("SELECT id, attacker_id, defender_id FROM wars WHERE status='active'")
+    for war in active_wars:
+        battle = await async_fetch_one("SELECT last_battle_time FROM war_battles WHERE war_id=?", (war['id'],))
+        now = time.time()
+        if battle and (now - battle['last_battle_time']) < BATTLE_ROUND_INTERVAL_MINUTES * 60:
+            continue
+        attacker = await async_fetch_one("SELECT * FROM countries WHERE id=?", (war['attacker_id'],))
+        defender = await async_fetch_one("SELECT * FROM countries WHERE id=?", (war['defender_id'],))
+        if not attacker or not defender:
+            continue
+        atk_power = attacker['army_count'] * (attacker['combat_capability'] / 100)
+        def_power = defender['army_count'] * (defender['combat_capability'] / 100)
+        def_loss = min(defender['army_count'], int(atk_power * 0.1))
+        atk_loss = min(attacker['army_count'], int(def_power * 0.08))
+        await async_execute("UPDATE countries SET army_count = army_count - ? WHERE id=?", (atk_loss, attacker['id']))
+        await async_execute("UPDATE countries SET army_count = army_count - ? WHERE id=?", (def_loss, defender['id']))
+        if battle:
+            await async_execute("UPDATE war_battles SET last_battle_time=? WHERE war_id=?", (now, war['id']))
+        else:
+            await async_execute("INSERT INTO war_battles (war_id, last_battle_time) VALUES (?, ?)", (war['id'], now))
+        if attacker['army_count'] <= 0 or defender['army_count'] <= 0:
+            await async_execute("UPDATE wars SET status='ended' WHERE id=?", (war['id'],))
+            # опционально: сообщение в канал war_reports о завершении войны
 
 # --- Запуск ---
 keep_alive()
