@@ -3,11 +3,17 @@ from discord.ext import commands
 from discord import app_commands
 from database import async_fetch_all, async_fetch_one, async_execute
 from data.buildings import BUILDING_TYPES
-from config import CHANNEL_IDS, COUNTRY_ROLE_IDS
+from config import CHANNEL_IDS
 import time
 import datetime
 import random
 from zoneinfo import ZoneInfo
+
+# Доступные ресурсы
+RESOURCE_NAMES = [
+    "Доллары", "Нефть", "Природный газ", "Уголь", "Железная руда",
+    "Продовольствие", "Древесина", "Пресная вода"
+]
 
 # ========================
 # КОНСТАНТЫ
@@ -61,12 +67,6 @@ SANCTION_TYPES = {
     "machinery_embargo": {"param": "industry_level", "amount": 3, "desc": "Эмбарго на оборудование"},
 }
 
-# Доступные ресурсы (для автодополнения)
-RESOURCE_NAMES = [
-    "Доллары", "Нефть", "Природный газ", "Уголь", "Железная руда",
-    "Продовольствие", "Древесина", "Пресная вода"
-]
-
 pending_alliance_invites = {}
 
 # Новостные шаблоны
@@ -83,6 +83,22 @@ MOBILIZE_OFF_NEWS = [
     "🔔 {ruler} подписал указ о демобилизации в {country}. Военное положение снято.",
     "✅ В {country} завершена мобилизация. {ruler} поблагодарил граждан за службу.",
     "🏳️ {country} возвращается к мирной жизни. Мобилизационные мероприятия прекращены."
+]
+
+# Новости о войне
+WAR_START_NEWS = [
+    "⚔️ Конфликт начался! {attacker} под руководством {attacker_ruler} объявил войну {defender}!",
+    "💥 Внимание! {attacker} и {defender} вступают в войну. {attacker_ruler} заявил о начале боевых действий.",
+    "🚀 Военная тревога! {attacker} атакует {defender}. {attacker_ruler} отдал приказ о наступлении.",
+    "🌍 Мир раскололся: {attacker} объявил войну {defender}. Правитель {attacker_ruler} выступил с обращением.",
+    "🔥 Пламя войны: {attacker} начинает вторжение в {defender}. {attacker_ruler} взял на себя ответственность."
+]
+WAR_PEACE_NEWS = [
+    "🕊️ Мир восстановлен! {country1} и {country2} заключили мирный договор.",
+    "✅ Война окончена: {country1} и {country2} пришли к соглашению о прекращении огня.",
+    "🤝 Дипломатия победила: {country1} и {country2} подписали мир.",
+    "📜 Исторический мир: {country1} и {country2} завершили военный конфликт.",
+    "🔚 Конец войны: {country1} и {country2} объявили о перемирии."
 ]
 
 LENDLEASE_MONEY_NEWS = [
@@ -131,6 +147,9 @@ def get_prestige_text(score):
     elif score <= 60: return "Влиятельный", "🟡"
     elif score <= 80: return "Сильно-Влиятельный", "🟢"
     else: return "Сверхвлиятельный", "🔵"
+
+# Выпадающий список ресурсов
+RESOURCE_CHOICES = [app_commands.Choice(name=r, value=r) for r in RESOURCE_NAMES]
 
 # ========================
 # VIEW: СТАТИСТИКА
@@ -580,6 +599,20 @@ class GameMenu(discord.ui.View):
     async def gov_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Управление государством", view=GovernmentView(self.country_id))
 
+    @discord.ui.button(label="🛒 Рынок", style=discord.ButtonStyle.primary)
+    async def market_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        lots = await async_fetch_all("SELECT id, resource_name, amount, price, seller_id FROM market WHERE sold=0")
+        if not lots:
+            content = "На рынке нет активных предложений."
+        else:
+            content = "**Рынок**\n"
+            for lot in lots:
+                seller_country = await async_fetch_one("SELECT name, owner_id FROM countries WHERE id=?", (lot['seller_id'],))
+                seller_name = seller_country['name'] if seller_country else "Неизвестно"
+                content += f"Лот #{lot['id']}: {lot['resource_name']} x{lot['amount']} за {lot['price']}$ (продавец: {seller_name})\n"
+            content += "\nИспользуйте `/market buy <id>` для покупки."
+        await interaction.response.edit_message(content=content, view=MarketMenuView(self.country_id))
+
 class ArmyView(discord.ui.View):
     def __init__(self, country_id):
         super().__init__(timeout=None)
@@ -800,10 +833,6 @@ class Game(commands.Cog):
         rows = await async_fetch_all("SELECT name FROM countries WHERE owner_id IS NULL AND name LIKE ?", (f"{current}%",))
         return [app_commands.Choice(name=row['name'], value=row['name']) for row in rows]
 
-    async def resource_autocomplete(self, interaction: discord.Interaction, current: str):
-        choices = [res for res in RESOURCE_NAMES if current.lower() in res.lower()]
-        return [app_commands.Choice(name=res, value=res) for res in choices]
-
     async def _get_country(self, user_id):
         return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
 
@@ -820,12 +849,12 @@ class Game(commands.Cog):
         if country and country['owner_id']:
             await self._notify_user(country['owner_id'], message)
 
-    async def _send_to_channel(self, channel_id, message):
-        if not channel_id:
-            return
-        channel = self.bot.get_channel(channel_id)
-        if channel:
-            await channel.send(message)
+    async def _get_channel_or_create(self, guild, name):
+        """Найти канал по имени или создать, если нет."""
+        channel = discord.utils.get(guild.text_channels, name=name)
+        if not channel:
+            channel = await guild.create_text_channel(name)
+        return channel
 
     # --- Основные команды ---
     @app_commands.command(name="country_choose", description="Выбрать свободную страну и правителя")
@@ -845,22 +874,14 @@ class Game(commands.Cog):
             (interaction.user.id, ruler_name, country, row['id'])
         )
 
-        # Выдача роли при регистрации
-        role_id = COUNTRY_ROLE_IDS.get(country)
-        if role_id:
-            role = interaction.guild.get_role(role_id)
-            if role:
-                try:
-                    await interaction.user.add_roles(role)
-                except:
-                    pass
-
-        # Отправка в канал регистраций по ID
+        # Отправка в канал регистраций: сначала по ID из конфига, иначе по имени
         reg_channel_id = CHANNEL_IDS.get("registration")
         if reg_channel_id:
             reg_channel = self.bot.get_channel(reg_channel_id)
-            if reg_channel:
-                await reg_channel.send(f"{interaction.user.mention} теперь управляет страной **{country}** как правитель **{ruler_name}**.")
+        else:
+            reg_channel = await self._get_channel_or_create(interaction.guild, "регистрация-стран")
+        if reg_channel:
+            await reg_channel.send(f"{interaction.user.mention} теперь управляет страной **{country}** как правитель **{ruler_name}**.")
         await interaction.response.send_message(f"Вы теперь управляете страной **{country}** как **{ruler_name}**! Используйте `/game`.", ephemeral=True)
 
     @app_commands.command(name="country_leave", description="Отказаться от управления страной")
@@ -869,15 +890,6 @@ class Game(commands.Cog):
         if not row:
             await interaction.response.send_message("Вы не управляете ни одной страной.", ephemeral=True)
             return
-        # Снятие роли
-        role_id = COUNTRY_ROLE_IDS.get(row['name'])
-        if role_id:
-            role = interaction.guild.get_role(role_id)
-            if role:
-                try:
-                    await interaction.user.remove_roles(role)
-                except:
-                    pass
         await async_execute("UPDATE countries SET owner_id=NULL, ruler_name='' WHERE id=?", (row['id'],))
         await interaction.response.send_message(f"Вы отказались от управления страной **{row['name']}**.", ephemeral=True)
 
@@ -1319,7 +1331,7 @@ class Game(commands.Cog):
                 await self._notify_country_owner(m['country_id'], f"Альянс **{alliance['name']}** был распущен лидером.")
         await interaction.response.send_message(f"Альянс '{alliance['name']}' распущен.", ephemeral=True)
 
-    # --- ВОЙНА (с новостями о начале и конце) ---
+    # --- ВОЙНА (с 5 вариантами новостей) ---
     @app_commands.command(name="declare_war", description="Объявить войну стране")
     async def declare_war(self, interaction: discord.Interaction, target: discord.Member):
         if target.id == interaction.user.id:
@@ -1346,21 +1358,29 @@ class Game(commands.Cog):
         defender_name = target_country['display_name'] or target_country['name']
         attacker_ruler = my_country['ruler_name'] or "Неизвестный правитель"
         defender_ruler = target_country['ruler_name'] or "Неизвестный правитель"
-        attacker_strength = my_country['combat_capability']
-        defender_strength = target_country['combat_capability']
         attacker_army = my_country['army_count']
         defender_army = target_country['army_count']
 
         date_str = datetime.datetime.now().strftime("%d.%m.%Y")
-        # Новость о начале войны
-        war_msg = (
-            f"# ⚔️ Объявление войны\n\n"
-            f"Сегодня, {date_str}, **{attacker_name}** под руководством **{attacker_ruler}** объявило войну **{defender_name}**.\n\n"
-            f"**Дата начала вооружённого конфликта:** {date_str}\n"
-            f"**Силы сторон:** {attacker_name} ({attacker_strength}) vs {defender_name} ({defender_strength})\n"
-            f"**Численность сторон:** {attacker_name} ({format_number(attacker_army)}) vs {defender_name} ({format_number(defender_army)})"
-        )
-        await self._send_to_channel(CHANNEL_IDS.get("war_reports"), war_msg)
+        # Случайная новость о начале войны
+        news_template = random.choice(WAR_START_NEWS)
+        news_msg = news_template.format(attacker=attacker_name, attacker_ruler=attacker_ruler, defender=defender_name, defender_ruler=defender_ruler)
+
+        war_channel_id = CHANNEL_IDS.get("war_reports")
+        if war_channel_id:
+            channel = self.bot.get_channel(war_channel_id)
+        else:
+            channel = await self._get_channel_or_create(interaction.guild, "военные-сводки")
+        if channel:
+            # Дополнительная информация о силах сторон
+            full_msg = (
+                f"# ⚔️ Объявление войны\n\n"
+                f"{news_msg}\n\n"
+                f"**Дата:** {date_str}\n"
+                f"**Силы сторон:** {attacker_name} ({my_country['combat_capability']}) vs {defender_name} ({target_country['combat_capability']})\n"
+                f"**Численность:** {attacker_name} ({format_number(attacker_army)}) vs {defender_name} ({format_number(defender_army)})"
+            )
+            await channel.send(full_msg)
 
         try:
             await target.send(f"{interaction.user.mention} объявил вам войну от страны **{attacker_name}**!")
@@ -1387,13 +1407,19 @@ class Game(commands.Cog):
             return
         await async_execute("UPDATE wars SET status='ended' WHERE id=?", (war['id'],))
 
-        # Новость о мире
         date_str = datetime.datetime.now().strftime("%d.%m.%Y")
-        peace_msg = (
-            f"# 🕊️ Мирный договор\n\n"
-            f"Сегодня, {date_str}, **{my_country['name']}** и **{target_country['name']}** заключили мир. Военные действия прекращены."
-        )
-        await self._send_to_channel(CHANNEL_IDS.get("war_reports"), peace_msg)
+        # Случайная новость о мире
+        peace_template = random.choice(WAR_PEACE_NEWS)
+        peace_msg = peace_template.format(country1=my_country['name'], country2=target_country['name'])
+
+        war_channel_id = CHANNEL_IDS.get("war_reports")
+        if war_channel_id:
+            channel = self.bot.get_channel(war_channel_id)
+        else:
+            channel = await self._get_channel_or_create(interaction.guild, "военные-сводки")
+        if channel:
+            full_msg = f"# 🕊️ Мирный договор\n\n{peace_msg}\n\n**Дата:** {date_str}"
+            await channel.send(full_msg)
 
         try:
             await target.send(f"{interaction.user.mention} предложил мир от страны **{my_country['name']}**. Война окончена.")
@@ -1401,7 +1427,7 @@ class Game(commands.Cog):
             pass
         await interaction.response.send_message(f"Мир заключён с {target_country['name']}.", ephemeral=True)
 
-    # --- МОБИЛИЗАЦИЯ (с кулдауном и новостями) ---
+    # --- МОБИЛИЗАЦИЯ ---
     @app_commands.command(name="mobilize", description="Переключить мобилизацию (макс. 2 раза в день по МСК)")
     async def mobilize(self, interaction: discord.Interaction):
         country = await self._get_country(interaction.user.id)
@@ -1471,7 +1497,6 @@ class Game(commands.Cog):
             (receiver_country['id'], amount, amount)
         )
 
-        # Новость в ленд-лиз
         channel_id = CHANNEL_IDS.get("lendlease")
         sender_name = sender_country['display_name'] or sender_country['name']
         receiver_name = receiver_country['display_name'] or receiver_country['name']
@@ -1489,7 +1514,7 @@ class Game(commands.Cog):
     # --- ПЕРЕВОД РЕСУРСОВ ---
     @app_commands.command(name="send_resource", description="Передать ресурс другой стране")
     @app_commands.describe(target="Игрок-получатель", resource="Название ресурса", amount="Количество")
-    @app_commands.autocomplete(resource=Game.resource_autocomplete)
+    @app_commands.choices(resource=RESOURCE_CHOICES)
     async def send_resource(self, interaction: discord.Interaction, target: discord.Member, resource: str, amount: int):
         if target.id == interaction.user.id:
             await interaction.response.send_message("Нельзя переслать ресурс самому себе.", ephemeral=True)
@@ -1536,7 +1561,7 @@ class Game(commands.Cog):
 
     @market.command(name="sell", description="Выставить ресурс на продажу")
     @app_commands.describe(resource="Название ресурса", amount="Количество", price="Цена за весь лот (в долларах)")
-    @app_commands.autocomplete(resource=Game.resource_autocomplete)
+    @app_commands.choices(resource=RESOURCE_CHOICES)
     async def market_sell(self, interaction: discord.Interaction, resource: str, amount: int, price: int):
         if amount <= 0 or price <= 0:
             await interaction.response.send_message("Количество и цена должны быть положительными.", ephemeral=True)
