@@ -47,6 +47,12 @@ async def async_execute(query, params=()):
 async def async_execute_many(query, params_list):
     await asyncio.to_thread(_execute_many, query, params_list)
 
+async def async_get_game_date():
+    row = await async_fetch_one("SELECT day, month, year FROM game_date WHERE id=1")
+    if row:
+        return datetime.date(row['year'], row['month'], row['day'])
+    return datetime.date(2000, 1, 1)
+
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
