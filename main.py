@@ -1,9 +1,11 @@
 import discord
 from discord.ext import commands, tasks
 import os
+from config import BATTLE_ROUND_INTERVAL_MINUTES
 from keep_alive import keep_alive
 from database import init_db, async_fetch_all, async_execute
 import datetime
+import time
 
 # Токен читается из переменной окружения (безопасно)
 TOKEN = os.environ.get("DISCORD_TOKEN")
