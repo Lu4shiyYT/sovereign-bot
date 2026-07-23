@@ -55,7 +55,7 @@ def get_conn():
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-    # Создание таблицы countries с новыми полями
+    # Основные таблицы (без изменений, только добавлены новые)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS countries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,8 +87,7 @@ def init_db():
             army_count INTEGER DEFAULT 0
         )
     """)
-
-    # Добавление новых столбцов для существующих таблиц (без ошибок, если уже есть)
+    # Добавление новых столбцов (если уже есть, ошибка игнорируется)
     new_columns = {
         'ruler_name': 'TEXT DEFAULT ""',
         'display_name': 'TEXT DEFAULT ""',
@@ -201,6 +200,27 @@ def init_db():
             PRIMARY KEY (alliance_id, country_id),
             FOREIGN KEY (alliance_id) REFERENCES alliances(id),
             FOREIGN KEY (country_id) REFERENCES countries(id)
+        )
+    """)
+
+    # Новые таблицы
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mobilize_cooldowns (
+            user_id INTEGER,
+            date TEXT,
+            count INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, date)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS market (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seller_id INTEGER NOT NULL,
+            resource_name TEXT NOT NULL,
+            amount REAL NOT NULL,
+            price REAL NOT NULL,
+            sold INTEGER DEFAULT 0,
+            FOREIGN KEY (seller_id) REFERENCES countries(id)
         )
     """)
 
