@@ -8,9 +8,19 @@ import asyncio
 
 DB_PATH = "sovereign.db"
 
+# Доступные ресурсы (тот же список)
+RESOURCE_NAMES = [
+    "Доллары", "Нефть", "Природный газ", "Уголь", "Железная руда",
+    "Продовольствие", "Древесина", "Пресная вода"
+]
+
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def resource_autocomplete(self, interaction: discord.Interaction, current: str):
+        choices = [res for res in RESOURCE_NAMES if current.lower() in res.lower()]
+        return [app_commands.Choice(name=res, value=res) for res in choices]
 
     def _init_game_sync(self):
         conn = get_conn()
@@ -91,7 +101,6 @@ class Admin(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Ошибка при восстановлении: {e}", ephemeral=True)
 
-    # ----- НОВЫЕ АДМИНСКИЕ КОМАНДЫ -----
     @app_commands.command(name="give_money", description="Выдать деньги стране (только админ)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(target="Игрок, которому выдать деньги", amount="Сумма в долларах")
@@ -112,9 +121,13 @@ class Admin(commands.Cog):
     @app_commands.command(name="give_resource", description="Выдать ресурс стране (только админ)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(target="Игрок", resource="Название ресурса", amount="Количество")
+    @app_commands.autocomplete(resource=resource_autocomplete)
     async def give_resource(self, interaction: discord.Interaction, target: discord.Member, resource: str, amount: int):
         if amount <= 0:
             await interaction.response.send_message("Количество должно быть положительным.", ephemeral=True)
+            return
+        if resource not in RESOURCE_NAMES:
+            await interaction.response.send_message("Неизвестный ресурс.", ephemeral=True)
             return
         country = await async_fetch_one("SELECT id, name FROM countries WHERE owner_id = ?", (target.id,))
         if not country:
@@ -147,9 +160,13 @@ class Admin(commands.Cog):
     @app_commands.command(name="take_resource", description="Забрать ресурс у страны (только админ)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(target="Игрок", resource="Название ресурса", amount="Количество")
+    @app_commands.autocomplete(resource=resource_autocomplete)
     async def take_resource(self, interaction: discord.Interaction, target: discord.Member, resource: str, amount: int):
         if amount <= 0:
             await interaction.response.send_message("Количество должно быть положительным.", ephemeral=True)
+            return
+        if resource not in RESOURCE_NAMES:
+            await interaction.response.send_message("Неизвестный ресурс.", ephemeral=True)
             return
         country = await async_fetch_one("SELECT id, name FROM countries WHERE owner_id = ?", (target.id,))
         if not country:
