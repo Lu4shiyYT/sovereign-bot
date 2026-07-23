@@ -13,11 +13,11 @@ class Admin(commands.Cog):
         self.bot = bot
 
     def _init_game_sync(self):
-        """Синхронная часть инициализации (вызывается через asyncio.to_thread)"""
         conn = get_conn()
         cur = conn.cursor()
         tables = ["wars", "alliance_members", "alliances", "sanctions", "pacts",
-                  "resources", "buildings", "provinces", "technologies", "countries"]
+                  "resources", "buildings", "provinces", "technologies", "countries",
+                  "mobilize_cooldowns", "market"]
         for table in tables:
             cur.execute(f"DROP TABLE IF EXISTS {table}")
         conn.commit()
@@ -91,7 +91,7 @@ class Admin(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Ошибка при восстановлении: {e}", ephemeral=True)
 
-    # ----- НОВАЯ КОМАНДА ДЛЯ ВЫДАЧИ ДЕНЕГ -----
+    # ----- НОВЫЕ АДМИНСКИЕ КОМАНДЫ -----
     @app_commands.command(name="give_money", description="Выдать деньги стране (только админ)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(target="Игрок, которому выдать деньги", amount="Сумма в долларах")
@@ -99,23 +99,68 @@ class Admin(commands.Cog):
         if amount <= 0:
             await interaction.response.send_message("Сумма должна быть положительной.", ephemeral=True)
             return
-
-        # Ищем страну игрока
         country = await async_fetch_one("SELECT id, name FROM countries WHERE owner_id = ?", (target.id,))
         if not country:
             await interaction.response.send_message(f"Игрок {target.mention} не управляет страной.", ephemeral=True)
             return
-
-        # Выдаём деньги
         await async_execute(
             "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
             (country['id'], amount, amount)
         )
-        await interaction.response.send_message(
-            f"✅ Выдано {amount:,} долларов стране **{country['name']}** (игрок {target.mention}).",
-            ephemeral=True
-        )
+        await interaction.response.send_message(f"✅ Выдано {amount:,} долларов стране **{country['name']}** (игрок {target.mention}).", ephemeral=True)
 
+    @app_commands.command(name="give_resource", description="Выдать ресурс стране (только админ)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(target="Игрок", resource="Название ресурса", amount="Количество")
+    async def give_resource(self, interaction: discord.Interaction, target: discord.Member, resource: str, amount: int):
+        if amount <= 0:
+            await interaction.response.send_message("Количество должно быть положительным.", ephemeral=True)
+            return
+        country = await async_fetch_one("SELECT id, name FROM countries WHERE owner_id = ?", (target.id,))
+        if not country:
+            await interaction.response.send_message(f"Игрок {target.mention} не управляет страной.", ephemeral=True)
+            return
+        await async_execute(
+            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+            (country['id'], resource, amount, amount)
+        )
+        await interaction.response.send_message(f"✅ Выдано {amount} единиц ресурса '{resource}' стране **{country['name']}** ({target.mention}).", ephemeral=True)
+
+    @app_commands.command(name="take_money", description="Забрать деньги у страны (только админ)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(target="Игрок", amount="Сумма")
+    async def take_money(self, interaction: discord.Interaction, target: discord.Member, amount: int):
+        if amount <= 0:
+            await interaction.response.send_message("Сумма должна быть положительной.", ephemeral=True)
+            return
+        country = await async_fetch_one("SELECT id, name FROM countries WHERE owner_id = ?", (target.id,))
+        if not country:
+            await interaction.response.send_message(f"Игрок {target.mention} не управляет страной.", ephemeral=True)
+            return
+        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
+        if not money_row or money_row['amount'] < amount:
+            await interaction.response.send_message(f"У страны {country['name']} недостаточно денег (имеется {money_row['amount'] if money_row else 0}).", ephemeral=True)
+            return
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (amount, country['id']))
+        await interaction.response.send_message(f"✅ Забрано {amount} долларов у страны **{country['name']}** ({target.mention}).", ephemeral=True)
+
+    @app_commands.command(name="take_resource", description="Забрать ресурс у страны (только админ)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(target="Игрок", resource="Название ресурса", amount="Количество")
+    async def take_resource(self, interaction: discord.Interaction, target: discord.Member, resource: str, amount: int):
+        if amount <= 0:
+            await interaction.response.send_message("Количество должно быть положительным.", ephemeral=True)
+            return
+        country = await async_fetch_one("SELECT id, name FROM countries WHERE owner_id = ?", (target.id,))
+        if not country:
+            await interaction.response.send_message(f"Игрок {target.mention} не управляет страной.", ephemeral=True)
+            return
+        res_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name=?", (country['id'], resource))
+        if not res_row or res_row['amount'] < amount:
+            await interaction.response.send_message(f"У страны {country['name']} недостаточно ресурса '{resource}' (имеется {res_row['amount'] if res_row else 0}).", ephemeral=True)
+            return
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?", (amount, country['id'], resource))
+        await interaction.response.send_message(f"✅ Забрано {amount} единиц ресурса '{resource}' у страны **{country['name']}** ({target.mention}).", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))
