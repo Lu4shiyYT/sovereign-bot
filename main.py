@@ -4,7 +4,6 @@ import os
 from config import BATTLE_ROUND_INTERVAL_MINUTES
 from keep_alive import keep_alive
 from database import init_db, async_fetch_all, async_execute, async_get_game_date
-from database import async_get_game_date
 import datetime
 import time
 
@@ -102,32 +101,7 @@ async def monthly_income():
             except:
                 pass
 
-        # Инкремент игровой даты
-        game_date = await async_get_game_date()
-        next_date = game_date + datetime.timedelta(days=1)
-        await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1", (next_date.day, next_date.month, next_date.year))
-        # Обновление названия голосового канала
-        voice_channel_id = 1529236474896322583
-        channel = bot.get_channel(voice_channel_id)
-        if channel and isinstance(channel, discord.VoiceChannel):
-            await channel.edit(name=f"📅 {next_date.strftime('%d.%m.%Y')}")
-
-        # --- Обновление игровой даты и названия канала (после обработки всех стран) ---
-        game_date = await async_get_game_date()
-        next_date = game_date + datetime.timedelta(days=1)
-        await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1",
-                            (next_date.day, next_date.month, next_date.year))
-    
-        voice_channel_id = 1529236474896322583   # твой ID голосового канала
-        channel = bot.get_channel(voice_channel_id)
-        if channel and isinstance(channel, discord.VoiceChannel):
-            try:
-                await channel.edit(name=f"📅 {next_date.strftime('%d.%m.%Y')}")
-            except Exception as e:
-                print(f"Не удалось изменить название канала: {e}")
-
-@bot.command(name="sync")
-    # --- Обновление игровой даты и названия канала (после обработки всех стран) ---
+    # --- ОБНОВЛЕНИЕ ИГРОВОЙ ДАТЫ И НАЗВАНИЯ КАНАЛА (ПОСЛЕ ЦИКЛА) ---
     game_date = await async_get_game_date()
     next_date = game_date + datetime.timedelta(days=1)
     await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1",
@@ -140,6 +114,8 @@ async def monthly_income():
             await channel.edit(name=f"📅 {next_date.strftime('%d.%m.%Y')}")
         except Exception as e:
             print(f"Не удалось изменить название канала: {e}")
+
+@bot.command(name="sync")
 @commands.is_owner()
 async def sync_commands(ctx):
     await bot.tree.sync()
