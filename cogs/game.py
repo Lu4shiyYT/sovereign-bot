@@ -918,11 +918,20 @@ class Game(commands.Cog):
         print(f"Ошибка в команде {interaction.command.name if interaction.command else 'unknown'}: {error}")
 
     async def country_autocomplete(self, interaction: discord.Interaction, current: str):
-        rows = await async_fetch_all("SELECT name FROM countries WHERE owner_id IS NULL AND name LIKE ?", (f"{current}%",))
-        return [app_commands.Choice(name=row['name'], value=row['name']) for row in rows]
+        try:
+            rows = await async_fetch_all("SELECT name FROM countries WHERE owner_id IS NULL AND name LIKE ?", (f"{current}%",))
+            return [app_commands.Choice(name=row['name'], value=row['name']) for row in rows]
+        except Exception as e:
+            # В случае ошибки возвращаем пустой список – команда не упадёт
+            print(f"Ошибка автодополнения стран: {e}")
+            return []
 
     async def _get_country(self, user_id):
-        return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
+        try:
+            return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
+        except Exception as e:
+            print(f"Ошибка получения страны: {e}")
+            return None
 
     async def _notify_user(self, user_id, message):
         user = self.bot.get_user(user_id)
@@ -949,39 +958,54 @@ class Game(commands.Cog):
     @app_commands.autocomplete(country=country_autocomplete)
     @app_commands.describe(country="Название страны", ruler_name="Ваше имя правителя")
     async def country_choose(self, interaction: discord.Interaction, country: str, ruler_name: str):
-        existing = await self._get_country(interaction.user.id)
-        if existing:
-            await interaction.response.send_message(f"Вы уже управляете страной: {existing['name']}. Сначала откажитесь от неё.", ephemeral=True)
-            return
-        row = await async_fetch_one("SELECT id, name FROM countries WHERE name=? AND owner_id IS NULL", (country,))
-        if not row:
-            await interaction.response.send_message("Страна не найдена или уже занята.", ephemeral=True)
-            return
-        await async_execute(
-            "UPDATE countries SET owner_id=?, ruler_name=?, display_name=? WHERE id=?",
-            (interaction.user.id, ruler_name, country, row['id'])
-        )
+        # Сразу подтверждаем получение команды, чтобы избежать таймаута
+        await interaction.response.defer(ephemeral=True)
+        try:
+            existing = await self._get_country(interaction.user.id)
+            if existing:
+                await interaction.followup.send(f"Вы уже управляете страной: {existing['name']}. Сначала откажитесь от неё.", ephemeral=True)
+                return
+            row = await async_fetch_one("SELECT id, name FROM countries WHERE name=? AND owner_id IS NULL", (country,))
+            if not row:
+                await interaction.followup.send("Страна не найдена или уже занята.", ephemeral=True)
+                return
+            await async_execute(
+                "UPDATE countries SET owner_id=?, ruler_name=?, display_name=? WHERE id=?",
+                (interaction.user.id, ruler_name, country, row['id'])
+            )
 
-        # Выдача ролей
-        country_role_id = COUNTRY_ROLES.get(country)
-        if country_role_id:
-            role = interaction.guild.get_role(country_role_id)
-            if role:
-                await interaction.user.add_roles(role)
-        if DEFAULT_PLAYER_ROLE_ID:
-            role = interaction.guild.get_role(DEFAULT_PLAYER_ROLE_ID)
-            if role:
-                await interaction.user.add_roles(role)
+            # Выдача ролей (безопасно)
+            country_role_id = COUNTRY_ROLES.get(country)
+            if country_role_id:
+                role = interaction.guild.get_role(country_role_id)
+                if role:
+                    try:
+                        await interaction.user.add_roles(role)
+                    except Exception as e:
+                        print(f"Не удалось выдать роль страны: {e}")
+            if DEFAULT_PLAYER_ROLE_ID:
+                role = interaction.guild.get_role(DEFAULT_PLAYER_ROLE_ID)
+                if role:
+                    try:
+                        await interaction.user.add_roles(role)
+                    except Exception as e:
+                        print(f"Не удалось выдать роль игрока: {e}")
 
-        # Отправка в канал регистраций: сначала по ID из конфига, иначе по имени
-        reg_channel_id = CHANNEL_IDS.get("registration")
-        if reg_channel_id:
-            reg_channel = self.bot.get_channel(reg_channel_id)
-        else:
-            reg_channel = await self._get_channel_or_create(interaction.guild, "регистрация-стран")
-        if reg_channel:
-            await reg_channel.send(f"{interaction.user.mention} теперь управляет страной **{country}** как правитель **{ruler_name}**.")
-        await interaction.response.send_message(f"Вы теперь управляете страной **{country}** как **{ruler_name}**! Используйте `/game`.", ephemeral=True)
+            # Отправка в канал регистраций
+            reg_channel_id = CHANNEL_IDS.get("registration")
+            if reg_channel_id:
+                reg_channel = self.bot.get_channel(reg_channel_id)
+            else:
+                reg_channel = await self._get_channel_or_create(interaction.guild, "регистрация-стран")
+            if reg_channel:
+                try:
+                    await reg_channel.send(f"{interaction.user.mention} теперь управляет страной **{country}** как правитель **{ruler_name}**.")
+                except Exception as e:
+                    print(f"Не удалось отправить в канал регистраций: {e}")
+
+            await interaction.followup.send(f"Вы теперь управляете страной **{country}** как **{ruler_name}**! Используйте `/game`.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при выборе страны: {e}", ephemeral=True)
 
     @app_commands.command(name="country_leave", description="Отказаться от управления страной")
     async def country_leave(self, interaction: discord.Interaction):
