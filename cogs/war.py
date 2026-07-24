@@ -463,6 +463,22 @@ class War(commands.Cog):
     # -------------------------------------------------
     # СЛУЖЕБНЫЕ МЕТОДЫ
     # -------------------------------------------------
+    async def _offer_post_war_terms(self, war, winner, loser):
+        """Отправляет победителю меню с условиями."""
+        if winner['owner_id'] is None:
+            return  # бот не выбирает
+        user = self.bot.get_user(winner['owner_id'])
+        if not user:
+            return
+        view = PostWarView(war['id'], winner['id'], loser['id'])
+        try:
+            await user.send(
+                f"🎉 Война против **{loser['name']}** окончена вашей победой! Выберите условия:",
+                view=view
+            )
+        except discord.Forbidden:
+            pass
+    
     async def country_autocomplete(self, interaction: discord.Interaction, current: str):
         """Автодополнение для declare_war_bot (будет перенесено из game.py)"""
         try:
@@ -474,6 +490,44 @@ class War(commands.Cog):
         except Exception as e:
             print(f"Ошибка автодополнения стран: {e}")
             return []
+
+class PostWarView(discord.ui.View):
+    def __init__(self, war_id, winner_id, loser_id):
+        super().__init__(timeout=86400)  # 24 часа на выбор
+        self.war_id = war_id
+        self.winner_id = winner_id
+        self.loser_id = loser_id
+
+    @discord.ui.button(label="Аннексировать полностью", style=discord.ButtonStyle.danger)
+    async def annex_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Перенести все регионы (провинции) победителю
+        await async_execute("UPDATE provinces SET country_id = ? WHERE country_id = ?", (self.winner_id, self.loser_id))
+        # Удалить проигравшую страну (у неё больше не будет owner_id)
+        await async_execute("DELETE FROM countries WHERE id = ?", (self.loser_id,))
+        # Закрыть войну
+        await async_execute("DELETE FROM wars WHERE id = ?", (self.war_id,))
+        await interaction.response.edit_message(content="✅ Страна полностью аннексирована. Территория перешла к вам.", view=None)
+
+    @discord.ui.button(label="Забрать определённые регионы", style=discord.ButtonStyle.primary)
+    async def take_regions_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Здесь в будущем откроем выбор регионов
+        await interaction.response.send_message("⚠️ Выбор регионов появится позже.", ephemeral=True)
+
+    @discord.ui.button(label="Сделать марионеткой", style=discord.ButtonStyle.success)
+    async def puppet_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Установить зависимость
+        await async_execute("INSERT OR IGNORE INTO puppets (master_id, puppet_id) VALUES (?, ?)", (self.winner_id, self.loser_id))
+        await async_execute("DELETE FROM wars WHERE id = ?", (self.war_id,))
+        await interaction.response.edit_message(content="✅ Страна стала вашим марионеточным государством.", view=None)
+
+    @discord.ui.button(label="Дополнительные условия", style=discord.ButtonStyle.primary)
+    async def extra_terms_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("⚠️ Меню дополнительных условий в разработке.", ephemeral=True)
+
+    @discord.ui.button(label="Ничего не делать", style=discord.ButtonStyle.secondary)
+    async def nothing_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await async_execute("DELETE FROM wars WHERE id = ?", (self.war_id,))
+        await interaction.response.edit_message(content="Вы отказались от требований. Война завершена.", view=None)
 
 async def setup(bot):
     await bot.add_cog(War(bot))
