@@ -127,6 +127,19 @@ async def monthly_income():
                 print(f"Не удалось изменить название канала: {e}")
 
 @bot.command(name="sync")
+    # --- Обновление игровой даты и названия канала (после обработки всех стран) ---
+    game_date = await async_get_game_date()
+    next_date = game_date + datetime.timedelta(days=1)
+    await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1",
+                        (next_date.day, next_date.month, next_date.year))
+
+    voice_channel_id = 1529236474896322583   # твой ID голосового канала
+    channel = bot.get_channel(voice_channel_id)
+    if channel and isinstance(channel, discord.VoiceChannel):
+        try:
+            await channel.edit(name=f"📅 {next_date.strftime('%d.%m.%Y')}")
+        except Exception as e:
+            print(f"Не удалось изменить название канала: {e}")
 @commands.is_owner()
 async def sync_commands(ctx):
     await bot.tree.sync()
