@@ -25,6 +25,7 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 async def load_cogs():
     await bot.load_extension("cogs.admin")
     await bot.load_extension("cogs.game")
+    await bot.load_extension("cogs.war")
 
 @bot.event
 async def on_ready():
