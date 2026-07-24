@@ -120,7 +120,9 @@ CONTINENTS = {
         "Гвинея": "🇬🇳",
         "Бенин": "🇧🇯",
         "Бурунди": "🇧🇮",
-        "Южный Судан": "🇸🇸"
+        "Южный Судан": "🇸🇸",
+        "Нигер": "🇳🇪",
+        "ЦАР": "🇨🇫",
     },
     "Северная Америка": {
         "США": "🇺🇸",
@@ -1025,17 +1027,157 @@ class WarMenuView(discord.ui.View):
         super().__init__(timeout=None)
         self.country_id = country_id
 
-    @discord.ui.button(label="Объявить войну", style=discord.ButtonStyle.danger)
-    async def declare_war_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Используйте команду `/declare_war @игрок`", ephemeral=True)
+    @discord.ui.button(label="⚔️ Объявить войну игроку", style=discord.ButtonStyle.danger)
+    async def war_player_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Получаем список всех стран, управляемых игроками, с которыми нет активной войны
+        my_country = await async_fetch_one("SELECT id FROM countries WHERE id=?", (self.country_id,))
+        if not my_country:
+            await interaction.response.send_message("Ошибка.", ephemeral=True)
+            return
 
-    @discord.ui.button(label="Предложить мир", style=discord.ButtonStyle.primary)
+        # Ищем страны, которыми управляют люди и с которыми нет войны
+        active_wars = await async_fetch_all(
+            "SELECT CASE WHEN attacker_id = ? THEN defender_id ELSE attacker_id END AS enemy "
+            "FROM wars WHERE (attacker_id = ? OR defender_id = ?) AND status = 'active'",
+            (self.country_id, self.country_id, self.country_id)
+        )
+        enemies = [w['enemy'] for w in active_wars]
+
+        targets = await async_fetch_all(
+            "SELECT id, name, owner_id FROM countries WHERE owner_id IS NOT NULL AND id != ?",
+            (self.country_id,)
+        )
+        available = [c for c in targets if c['id'] not in enemies]
+        if not available:
+            await interaction.response.send_message("Нет доступных стран для объявления войны.", ephemeral=True)
+            return
+
+        options = []
+        for c in available:
+            user = interaction.guild.get_member(c['owner_id'])
+            label = f"{c['name']} ({user.display_name if user else 'неизвестный'})"
+            options.append(discord.SelectOption(label=label, value=str(c['id'])))
+
+        select = WarPlayerSelect(self.country_id, options)
+        view = discord.ui.View()
+        view.add_item(select)
+        view.add_item(BackButton(self.country_id))
+        await interaction.response.edit_message(content="Выберите игрока для объявления войны:", view=view)
+
+    @discord.ui.button(label="🤖 Объявить войну боту", style=discord.ButtonStyle.danger)
+    async def war_bot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        my_country = await async_fetch_one("SELECT id FROM countries WHERE id=?", (self.country_id,))
+        if not my_country:
+            await interaction.response.send_message("Ошибка.", ephemeral=True)
+            return
+
+        # Получаем свободные страны (боты), с которыми нет войны
+        active_wars = await async_fetch_all(
+            "SELECT CASE WHEN attacker_id = ? THEN defender_id ELSE attacker_id END AS enemy "
+            "FROM wars WHERE (attacker_id = ? OR defender_id = ?) AND status = 'active'",
+            (self.country_id, self.country_id, self.country_id)
+        )
+        enemies = [w['enemy'] for w in active_wars]
+
+        bot_countries = await async_fetch_all(
+            "SELECT id, name FROM countries WHERE owner_id IS NULL"
+        )
+        available = [c for c in bot_countries if c['id'] not in enemies]
+        if not available:
+            await interaction.response.send_message("Нет доступных ботов для войны.", ephemeral=True)
+            return
+
+        options = [discord.SelectOption(label=c['name'], value=str(c['id'])) for c in available]
+        select = WarBotSelect(self.country_id, options)
+        view = discord.ui.View()
+        view.add_item(select)
+        view.add_item(BackButton(self.country_id))
+        await interaction.response.edit_message(content="Выберите бота для объявления войны:", view=view)
+
+    @discord.ui.button(label="🕊️ Предложить мир", style=discord.ButtonStyle.primary)
     async def peace_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Используйте команду `/peace_treaty @игрок`", ephemeral=True)
+        # Показываем список стран, с которыми идёт война
+        wars = await async_fetch_all(
+            "SELECT w.id AS war_id, CASE WHEN w.attacker_id = ? THEN w.defender_id ELSE w.attacker_id END AS enemy_id "
+            "FROM wars w WHERE (w.attacker_id = ? OR w.defender_id = ?) AND w.status = 'active'",
+            (self.country_id, self.country_id, self.country_id)
+        )
+        if not wars:
+            await interaction.response.send_message("У вас нет активных войн.", ephemeral=True)
+            return
 
-    @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary)
+        options = []
+        for w in wars:
+            enemy = await async_fetch_one("SELECT name, owner_id FROM countries WHERE id=?", (w['enemy_id'],))
+            if enemy:
+                label = enemy['name']
+                if enemy['owner_id']:
+                    user = interaction.guild.get_member(enemy['owner_id'])
+                    label += f" ({user.display_name if user else 'игрок'})"
+                else:
+                    label += " (бот)"
+                options.append(discord.SelectOption(label=label, value=str(w['war_id'])))
+
+        select = PeaceSelect(self.country_id, options)
+        view = discord.ui.View()
+        view.add_item(select)
+        view.add_item(BackButton(self.country_id))
+        await interaction.response.edit_message(content="Выберите войну для мирного договора:", view=view)
+
+    @discord.ui.button(label="◀ Назад", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
+
+class BackButton(discord.ui.Button):
+    """Универсальная кнопка возврата в главное меню."""
+    def __init__(self, country_id):
+        super().__init__(label="◀ Назад", style=discord.ButtonStyle.secondary)
+        self.country_id = country_id
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
+
+class WarPlayerSelect(discord.ui.Select):
+    def __init__(self, country_id, options):
+        super().__init__(placeholder="Выберите игрока...", options=options)
+        self.country_id = country_id
+
+    async def callback(self, interaction: discord.Interaction):
+        target_id = int(self.values[0])
+        # Вызываем логику объявления войны (перенесём из команды)
+        # Здесь мы используем метод из кога War, но так как мы внутри game.py, можем вызвать напрямую.
+        # Проще отправить команду через interaction.client.get_cog("War")
+        war_cog = interaction.client.get_cog("War")
+        if war_cog:
+            await war_cog._declare_war(interaction, self.country_id, target_id)
+        else:
+            await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
+
+class WarBotSelect(discord.ui.Select):
+    def __init__(self, country_id, options):
+        super().__init__(placeholder="Выберите бота...", options=options)
+        self.country_id = country_id
+
+    async def callback(self, interaction: discord.Interaction):
+        target_id = int(self.values[0])
+        war_cog = interaction.client.get_cog("War")
+        if war_cog:
+            await war_cog._declare_war(interaction, self.country_id, target_id, is_bot=True)
+        else:
+            await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
+
+class PeaceSelect(discord.ui.Select):
+    def __init__(self, country_id, options):
+        super().__init__(placeholder="Выберите войну...", options=options)
+        self.country_id = country_id
+
+    async def callback(self, interaction: discord.Interaction):
+        war_id = int(self.values[0])
+        war_cog = interaction.client.get_cog("War")
+        if war_cog:
+            await war_cog._make_peace(interaction, war_id)
+        else:
+            await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
 
 class MarketMenuView(discord.ui.View):
     def __init__(self, country_id):
