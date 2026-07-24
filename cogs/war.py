@@ -8,6 +8,10 @@ import datetime
 from zoneinfo import ZoneInfo
 
 try:
+    from config import BATTLE_ROUND_INTERVAL_MINUTES
+except ImportError:
+    BATTLE_ROUND_INTERVAL_MINUTES = 30
+try:
     from config import CHANNEL_IDS
 except ImportError:
     CHANNEL_IDS = {}
@@ -31,6 +35,60 @@ WAR_PEACE_NEWS = [
 class War(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+            async def cog_load(self):
+        """Запускается при загрузке кога."""
+        if not self.battle_loop.is_running():
+            self.battle_loop.start()
+
+    @tasks.loop(minutes=30)  # можно взять из конфига
+    async def battle_loop(self):
+        """Боевой цикл – выполняется каждые 30 минут."""
+        active_wars = await async_fetch_all("SELECT id, attacker_id, defender_id FROM wars WHERE status='active'")
+        now = time.time()
+        for war in active_wars:
+            battle = await async_fetch_one("SELECT last_battle_time FROM war_battles WHERE war_id=?", (war['id'],))
+            if battle and (now - battle['last_battle_time']) < 30 * 60:  # 30 минут
+                continue
+
+            attacker = await async_fetch_one("SELECT * FROM countries WHERE id=?", (war['attacker_id'],))
+            defender = await async_fetch_one("SELECT * FROM countries WHERE id=?", (war['defender_id'],))
+            if not attacker or not defender:
+                continue
+
+            # Расчёт потерь с учётом bot_strength
+            if attacker['owner_id'] is None:
+                bot_factor = (attacker.get('bot_strength', 5) / 10)
+            else:
+                bot_factor = 1.0
+            atk_power = attacker['army_count'] * (attacker['combat_capability'] / 100) * bot_factor
+
+            if defender['owner_id'] is None:
+                bot_factor = (defender.get('bot_strength', 5) / 10)
+            else:
+                bot_factor = 1.0
+            def_power = defender['army_count'] * (defender['combat_capability'] / 100) * bot_factor
+
+            def_loss = min(defender['army_count'], int(atk_power * 0.1))
+            atk_loss = min(attacker['army_count'], int(def_power * 0.08))
+
+            await async_execute("UPDATE countries SET army_count = army_count - ? WHERE id=?", (atk_loss, attacker['id']))
+            await async_execute("UPDATE countries SET army_count = army_count - ? WHERE id=?", (def_loss, defender['id']))
+
+            if battle:
+                await async_execute("UPDATE war_battles SET last_battle_time=? WHERE war_id=?", (now, war['id']))
+            else:
+                await async_execute("INSERT INTO war_battles (war_id, last_battle_time) VALUES (?, ?)", (war['id'], now))
+
+            # Проверка на завершение войны
+            if attacker['army_count'] <= 0 or defender['army_count'] <= 0:
+                winner = attacker if attacker['army_count'] > 0 else defender
+                loser = defender if winner == attacker else attacker
+                await async_execute("UPDATE wars SET status='ended' WHERE id=?", (war['id'],))
+                # Отправить новость о победе
+                # ... (можно добавить аналогично как при объявлении)
+                # Предложить победителю условия
+                await self._offer_post_war_terms(war, winner, loser)
         # Боевой цикл будет запущен в main.py после загрузки кога
 
         async def _declare_war(self, interaction: discord.Interaction, attacker_id: int, defender_id: int, is_bot: bool = False):
