@@ -242,6 +242,16 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS puppets (
+            master_id INTEGER,
+            puppet_id INTEGER,
+            PRIMARY KEY (master_id, puppet_id),
+            FOREIGN KEY (master_id) REFERENCES countries(id),
+            FOREIGN KEY (puppet_id) REFERENCES countries(id)
+        )
+    """)
+
     # Новые таблицы
     cur.execute("""
         CREATE TABLE IF NOT EXISTS mobilize_cooldowns (
