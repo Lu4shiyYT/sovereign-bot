@@ -903,6 +903,20 @@ class Game(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+        async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        """Обработчик ошибок для всех слеш-команд этого кога."""
+        # Если уже был ответ, пытаемся отредактировать или отправить followup
+        if interaction.response.is_done():
+            if isinstance(interaction.response, discord.InteractionResponse) and not interaction.is_expired():
+                try:
+                    await interaction.followup.send(f"❌ Произошла ошибка: {error}", ephemeral=True)
+                except:
+                    pass
+        else:
+            await interaction.response.send_message(f"❌ Произошла ошибка: {error}", ephemeral=True)
+        # Логируем в консоль
+        print(f"Ошибка в команде {interaction.command.name if interaction.command else 'unknown'}: {error}")
+
     async def country_autocomplete(self, interaction: discord.Interaction, current: str):
         rows = await async_fetch_all("SELECT name FROM countries WHERE owner_id IS NULL AND name LIKE ?", (f"{current}%",))
         return [app_commands.Choice(name=row['name'], value=row['name']) for row in rows]
@@ -1021,8 +1035,11 @@ class Game(commands.Cog):
     @app_commands.command(name="date", description="Показать текущую игровую дату")
     async def show_date(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        game_date = await async_get_game_date()
-        await interaction.followup.send(f"📅 Текущая игровая дата: {game_date.strftime('%d.%m.%Y')}", ephemeral=True)
+        try:
+            game_date = await async_get_game_date()
+            await interaction.followup.send(f"📅 Текущая игровая дата: {game_date.strftime('%d.%m.%Y')}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при получении даты: {e}", ephemeral=True)
 
     @app_commands.command(name="stats", description="Статистика страны")
     @app_commands.describe(member="Игрок (оставьте пустым для своей статистики)")
@@ -1459,129 +1476,133 @@ class Game(commands.Cog):
     @app_commands.describe(target="Игрок, управляющий страной")
     async def declare_war_player(self, interaction: discord.Interaction, target: discord.Member):
         await interaction.response.defer(ephemeral=True)
-    
-        if target.id == interaction.user.id:
-            await interaction.followup.send("Нельзя объявить войну самому себе!", ephemeral=True)
-            return
-    
-        my_country = await self._get_country(interaction.user.id)
-        if not my_country:
-            await interaction.followup.send("Вы не управляете страной.", ephemeral=True)
-            return
-    
-        target_country = await self._get_country(target.id)
-        if not target_country:
-            await interaction.followup.send("Этот игрок не управляет страной.", ephemeral=True)
-            return
-    
-        existing = await async_fetch_one(
-            "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
-            (my_country['id'], target_country['id'], target_country['id'], my_country['id'])
-        )
-        if existing:
-            await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
-            return
-    
-        now = time.time()
-        await async_execute("INSERT INTO wars (attacker_id, defender_id, status, start_time) VALUES (?, ?, 'active', ?)",
-                            (my_country['id'], target_country['id'], now))
-    
-        attacker_name = my_country['display_name'] or my_country['name']
-        defender_name = target_country['display_name'] or target_country['name']
-        attacker_ruler = my_country['ruler_name'] or "Неизвестный правитель"
-        defender_ruler = target_country['ruler_name'] or "Неизвестный правитель"
-        attacker_army = my_country['army_count']
-        defender_army = target_country['army_count']
-        attacker_strength = my_country['combat_capability']
-        defender_strength = target_country['combat_capability']
-    
-        game_date = await async_get_game_date()
-        date_str = game_date.strftime("%d.%m.%Y")
-        news_template = random.choice(WAR_START_NEWS)
-        news_msg = news_template.format(attacker=attacker_name, attacker_ruler=attacker_ruler,
-                                        defender=defender_name, defender_ruler=defender_ruler)
-    
-        war_channel_id = CHANNEL_IDS.get("war_reports")
-        if war_channel_id:
-            channel = self.bot.get_channel(war_channel_id)
-        else:
-            channel = await self._get_channel_or_create(interaction.guild, "военные-сводки")
-        if channel:
-            full_msg = (
-                f"# ⚔️ Объявление войны\n\n"
-                f"{news_msg}\n\n"
-                f"**Дата:** {date_str}\n"
-                f"**Силы сторон:** {attacker_name} ({attacker_strength}) vs {defender_name} ({defender_strength})\n"
-                f"**Численность:** {attacker_name} ({format_number(attacker_army)}) vs {defender_name} ({format_number(defender_army)})"
-            )
-            await channel.send(full_msg)
-    
         try:
-            await target.send(f"{interaction.user.mention} объявил вам войну от страны **{attacker_name}**!")
-        except discord.Forbidden:
-            pass
+            if target.id == interaction.user.id:
+                await interaction.followup.send("Нельзя объявить войну самому себе!", ephemeral=True)
+                return
     
-        await interaction.followup.send(f"Война объявлена стране {defender_name}.", ephemeral=True)
+            my_country = await self._get_country(interaction.user.id)
+            if not my_country:
+                await interaction.followup.send("Вы не управляете страной.", ephemeral=True)
+                return
+    
+            target_country = await self._get_country(target.id)
+            if not target_country:
+                await interaction.followup.send("Этот игрок не управляет страной.", ephemeral=True)
+                return
+    
+            existing = await async_fetch_one(
+                "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
+                (my_country['id'], target_country['id'], target_country['id'], my_country['id'])
+            )
+            if existing:
+                await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
+                return
+    
+            now = time.time()
+            await async_execute("INSERT INTO wars (attacker_id, defender_id, status, start_time) VALUES (?, ?, 'active', ?)",
+                                (my_country['id'], target_country['id'], now))
+    
+            attacker_name = my_country['display_name'] or my_country['name']
+            defender_name = target_country['display_name'] or target_country['name']
+            attacker_ruler = my_country['ruler_name'] or "Неизвестный правитель"
+            defender_ruler = target_country['ruler_name'] or "Неизвестный правитель"
+            attacker_army = my_country['army_count']
+            defender_army = target_country['army_count']
+            attacker_strength = my_country['combat_capability']
+            defender_strength = target_country['combat_capability']
+    
+            game_date = await async_get_game_date()
+            date_str = game_date.strftime("%d.%m.%Y")
+            news_template = random.choice(WAR_START_NEWS)
+            news_msg = news_template.format(attacker=attacker_name, attacker_ruler=attacker_ruler,
+                                            defender=defender_name, defender_ruler=defender_ruler)
+    
+            war_channel_id = CHANNEL_IDS.get("war_reports")
+            if war_channel_id:
+                channel = self.bot.get_channel(war_channel_id)
+            else:
+                channel = await self._get_channel_or_create(interaction.guild, "военные-сводки")
+            if channel:
+                full_msg = (
+                    f"# ⚔️ Объявление войны\n\n"
+                    f"{news_msg}\n\n"
+                    f"**Дата:** {date_str}\n"
+                    f"**Силы сторон:** {attacker_name} ({attacker_strength}) vs {defender_name} ({defender_strength})\n"
+                    f"**Численность:** {attacker_name} ({format_number(attacker_army)}) vs {defender_name} ({format_number(defender_army)})"
+                )
+                await channel.send(full_msg)
+    
+            try:
+                await target.send(f"{interaction.user.mention} объявил вам войну от страны **{attacker_name}**!")
+            except discord.Forbidden:
+                pass
+    
+            await interaction.followup.send(f"Война объявлена стране {defender_name}.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при объявлении войны: {e}", ephemeral=True)
 
     @app_commands.command(name="declare_war_bot", description="Объявить войну свободной стране (бот)")
     @app_commands.autocomplete(country=country_autocomplete)
     @app_commands.describe(country="Название свободной страны")
     async def declare_war_bot(self, interaction: discord.Interaction, country: str):
         await interaction.response.defer(ephemeral=True)
+        try:
+            my_country = await self._get_country(interaction.user.id)
+            if not my_country:
+                await interaction.followup.send("Вы не управляете страной.", ephemeral=True)
+                return
     
-        my_country = await self._get_country(interaction.user.id)
-        if not my_country:
-            await interaction.followup.send("Вы не управляете страной.", ephemeral=True)
-            return
+            target_country = await async_fetch_one("SELECT * FROM countries WHERE name=? AND owner_id IS NULL", (country,))
+            if not target_country:
+                await interaction.followup.send("Страна не найдена или уже занята.", ephemeral=True)
+                return
     
-        target_country = await async_fetch_one("SELECT * FROM countries WHERE name=? AND owner_id IS NULL", (country,))
-        if not target_country:
-            await interaction.followup.send("Страна не найдена или уже занята.", ephemeral=True)
-            return
-    
-        existing = await async_fetch_one(
-            "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
-            (my_country['id'], target_country['id'], target_country['id'], my_country['id'])
-        )
-        if existing:
-            await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
-            return
-    
-        now = time.time()
-        await async_execute("INSERT INTO wars (attacker_id, defender_id, status, start_time) VALUES (?, ?, 'active', ?)",
-                            (my_country['id'], target_country['id'], now))
-    
-        attacker_name = my_country['display_name'] or my_country['name']
-        defender_name = target_country['display_name'] or target_country['name']
-        attacker_ruler = my_country['ruler_name'] or "Неизвестный правитель"
-        defender_ruler = "Неизвестный правитель"
-        attacker_army = my_country['army_count']
-        defender_army = target_country['army_count']
-        attacker_strength = my_country['combat_capability']
-        defender_strength = target_country['combat_capability']
-    
-        game_date = await async_get_game_date()
-        date_str = game_date.strftime("%d.%m.%Y")
-        news_template = random.choice(WAR_START_NEWS)
-        news_msg = news_template.format(attacker=attacker_name, attacker_ruler=attacker_ruler,
-                                        defender=defender_name, defender_ruler=defender_ruler)
-    
-        war_channel_id = CHANNEL_IDS.get("war_reports")
-        if war_channel_id:
-            channel = self.bot.get_channel(war_channel_id)
-        else:
-            channel = await self._get_channel_or_create(interaction.guild, "военные-сводки")
-        if channel:
-            full_msg = (
-                f"# ⚔️ Объявление войны\n\n"
-                f"{news_msg}\n\n"
-                f"**Дата:** {date_str}\n"
-                f"**Силы сторон:** {attacker_name} ({attacker_strength}) vs {defender_name} ({defender_strength})\n"
-                f"**Численность:** {attacker_name} ({format_number(attacker_army)}) vs {defender_name} ({format_number(defender_army)})"
+            existing = await async_fetch_one(
+                "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
+                (my_country['id'], target_country['id'], target_country['id'], my_country['id'])
             )
-            await channel.send(full_msg)
+            if existing:
+                await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
+                return
     
-        await interaction.followup.send(f"Война объявлена стране {defender_name}.", ephemeral=True)
+            now = time.time()
+            await async_execute("INSERT INTO wars (attacker_id, defender_id, status, start_time) VALUES (?, ?, 'active', ?)",
+                                (my_country['id'], target_country['id'], now))
+    
+            attacker_name = my_country['display_name'] or my_country['name']
+            defender_name = target_country['display_name'] or target_country['name']
+            attacker_ruler = my_country['ruler_name'] or "Неизвестный правитель"
+            defender_ruler = "Неизвестный правитель"
+            attacker_army = my_country['army_count']
+            defender_army = target_country['army_count']
+            attacker_strength = my_country['combat_capability']
+            defender_strength = target_country['combat_capability']
+    
+            game_date = await async_get_game_date()
+            date_str = game_date.strftime("%d.%m.%Y")
+            news_template = random.choice(WAR_START_NEWS)
+            news_msg = news_template.format(attacker=attacker_name, attacker_ruler=attacker_ruler,
+                                            defender=defender_name, defender_ruler=defender_ruler)
+    
+            war_channel_id = CHANNEL_IDS.get("war_reports")
+            if war_channel_id:
+                channel = self.bot.get_channel(war_channel_id)
+            else:
+                channel = await self._get_channel_or_create(interaction.guild, "военные-сводки")
+            if channel:
+                full_msg = (
+                    f"# ⚔️ Объявление войны\n\n"
+                    f"{news_msg}\n\n"
+                    f"**Дата:** {date_str}\n"
+                    f"**Силы сторон:** {attacker_name} ({attacker_strength}) vs {defender_name} ({defender_strength})\n"
+                    f"**Численность:** {attacker_name} ({format_number(attacker_army)}) vs {defender_name} ({format_number(defender_army)})"
+                )
+                await channel.send(full_msg)
+    
+            await interaction.followup.send(f"Война объявлена стране {defender_name}.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при объявлении войны: {e}", ephemeral=True)
 
     @app_commands.command(name="peace_treaty", description="Предложить мир противнику")
     async def peace_treaty(self, interaction: discord.Interaction, target: discord.Member):
@@ -1872,13 +1893,16 @@ class Game(commands.Cog):
     @app_commands.choices(religion=RELIGION_CHOICES)
     async def set_religion(self, interaction: discord.Interaction, religion: str):
         await interaction.response.defer(ephemeral=True)
-        country = await self._get_country(interaction.user.id)
-        if not country:
-            await interaction.followup.send("Вы не управляете страной.", ephemeral=True)
-            return
-        await async_execute("UPDATE countries SET religion=? WHERE id=?", (religion, country['id']))
-        await self._update_role(interaction.user, RELIGION_ROLES, religion)
-        await interaction.followup.send(f"✅ Государственная религия изменена на **{religion}**.", ephemeral=True)
+        try:
+            country = await self._get_country(interaction.user.id)
+            if not country:
+                await interaction.followup.send("Вы не управляете страной.", ephemeral=True)
+                return
+            await async_execute("UPDATE countries SET religion=? WHERE id=?", (religion, country['id']))
+            await self._update_role(interaction.user, RELIGION_ROLES, religion)
+            await interaction.followup.send(f"✅ Государственная религия изменена на **{religion}**.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при смене религии: {e}", ephemeral=True)
 
     @app_commands.command(name="set_ideology", description="Установить государственную идеологию")
     @app_commands.choices(ideology=IDEOLOGY_CHOICES)
