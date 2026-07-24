@@ -12,6 +12,171 @@ import datetime
 import random
 from zoneinfo import ZoneInfo
 
+# Континенты и страны с флагами (эмодзи Discord)
+CONTINENTS = {
+    "Европа": {
+        "Россия": "🇷🇺",
+        "Германия": "🇩🇪",
+        "Франция": "🇫🇷",
+        "Великобритания": "🇬🇧",
+        "Италия": "🇮🇹",
+        "Испания": "🇪🇸",
+        "Польша": "🇵🇱",
+        "Украина": "🇺🇦",
+        "Швеция": "🇸🇪",
+        "Норвегия": "🇳🇴",
+        "Финляндия": "🇫🇮",
+        "Греция": "🇬🇷",
+        "Португалия": "🇵🇹",
+        "Нидерланды": "🇳🇱",
+        "Бельгия": "🇧🇪",
+        "Австрия": "🇦🇹",
+        "Швейцария": "🇨🇭",
+        "Дания": "🇩🇰",
+        "Ирландия": "🇮🇪",
+        "Чехия": "🇨🇿",
+        "Румыния": "🇷🇴",
+        "Венгрия": "🇭🇺",
+        "Словакия": "🇸🇰",
+        "Болгария": "🇧🇬",
+        "Сербия": "🇷🇸",
+        "Хорватия": "🇭🇷",
+        "Словения": "🇸🇮",
+        "Эстония": "🇪🇪",
+        "Латвия": "🇱🇻",
+        "Литва": "🇱🇹",
+        "Исландия": "🇮🇸",
+        "Беларусь": "🇧🇾",
+        "Молдова": "🇲🇩",
+        "Люксембург": "🇱🇺",
+        "Монако": "🇲🇨",
+        "Андорра": "🇦🇩",
+        "Мальта": "🇲🇹",
+        "Сан-Марино": "🇸🇲",
+        "Ватикан": "🇻🇦"
+    },
+    "Азия": {
+        "Китай": "🇨🇳",
+        "Индия": "🇮🇳",
+        "Япония": "🇯🇵",
+        "Южная Корея": "🇰🇷",
+        "Турция": "🇹🇷",
+        "Индонезия": "🇮🇩",
+        "Саудовская Аравия": "🇸🇦",
+        "Иран": "🇮🇷",
+        "Ирак": "🇮🇶",
+        "Афганистан": "🇦🇫",
+        "Пакистан": "🇵🇰",
+        "Бангладеш": "🇧🇩",
+        "Вьетнам": "🇻🇳",
+        "Таиланд": "🇹🇭",
+        "Малайзия": "🇲🇾",
+        "Филиппины": "🇵🇭",
+        "Мьянма": "🇲🇲",
+        "Казахстан": "🇰🇿",
+        "Узбекистан": "🇺🇿",
+        "Туркменистан": "🇹🇲",
+        "Киргизия": "🇰🇬",
+        "Таджикистан": "🇹🇯",
+        "Монголия": "🇲🇳",
+        "Непал": "🇳🇵",
+        "Шри-Ланка": "🇱🇰",
+        "Камбоджа": "🇰🇭",
+        "Лаос": "🇱🇦",
+        "Бруней": "🇧🇳",
+        "Мальдивы": "🇲🇻",
+        "Бутан": "🇧🇹",
+        "Сингапур": "🇸🇬",
+        "Восточный Тимор": "🇹🇱"
+    },
+    "Африка": {
+        "Нигерия": "🇳🇬",
+        "Эфиопия": "🇪🇹",
+        "Египет": "🇪🇬",
+        "ДР Конго": "🇨🇩",
+        "ЮАР": "🇿🇦",
+        "Танзания": "🇹🇿",
+        "Кения": "🇰🇪",
+        "Уганда": "🇺🇬",
+        "Алжир": "🇩🇿",
+        "Судан": "🇸🇩",
+        "Марокко": "🇲🇦",
+        "Ангола": "🇦🇴",
+        "Гана": "🇬🇭",
+        "Мозамбик": "🇲🇿",
+        "Мадагаскар": "🇲🇬",
+        "Камерун": "🇨🇲",
+        "Кот-д'Ивуар": "🇨🇮",
+        "Буркина-Фасо": "🇧🇫",
+        "Мали": "🇲🇱",
+        "Малави": "🇲🇼",
+        "Замбия": "🇿🇲",
+        "Сенегал": "🇸🇳",
+        "Чад": "🇹🇩",
+        "Сомали": "🇸🇴",
+        "Зимбабве": "🇿🇼",
+        "Руанда": "🇷🇼",
+        "Тунис": "🇹🇳",
+        "Гвинея": "🇬🇳",
+        "Бенин": "🇧🇯",
+        "Бурунди": "🇧🇮",
+        "Южный Судан": "🇸🇸"
+    },
+    "Северная Америка": {
+        "США": "🇺🇸",
+        "Канада": "🇨🇦",
+        "Мексика": "🇲🇽",
+        "Гватемала": "🇬🇹",
+        "Куба": "🇨🇺",
+        "Гаити": "🇭🇹",
+        "Доминиканская Республика": "🇩🇴",
+        "Гондурас": "🇭🇳",
+        "Сальвадор": "🇸🇻",
+        "Никарагуа": "🇳🇮",
+        "Коста-Рика": "🇨🇷",
+        "Панама": "🇵🇦",
+        "Ямайка": "🇯🇲",
+        "Тринидад и Тобаго": "🇹🇹",
+        "Багамы": "🇧🇸",
+        "Белиз": "🇧🇿",
+        "Барбадос": "🇧🇧",
+        "Сент-Люсия": "🇱🇨",
+        "Сент-Винсент и Гренадины": "🇻🇨",
+        "Гренада": "🇬🇩"
+    },
+    "Южная Америка": {
+        "Бразилия": "🇧🇷",
+        "Аргентина": "🇦🇷",
+        "Колумбия": "🇨🇴",
+        "Перу": "🇵🇪",
+        "Венесуэла": "🇻🇪",
+        "Чили": "🇨🇱",
+        "Эквадор": "🇪🇨",
+        "Боливия": "🇧🇴",
+        "Парагвай": "🇵🇾",
+        "Уругвай": "🇺🇾",
+        "Гайана": "🇬🇾",
+        "Суринам": "🇸🇷",
+        "Французская Гвиана": "🇬🇫"
+    },
+    "Океания": {
+        "Австралия": "🇦🇺",
+        "Новая Зеландия": "🇳🇿",
+        "Папуа - Новая Гвинея": "🇵🇬",
+        "Фиджи": "🇫🇯",
+        "Соломоновы Острова": "🇸🇧",
+        "Вануату": "🇻🇺",
+        "Самоа": "🇼🇸",
+        "Тонга": "🇹🇴",
+        "Федеративные Штаты Микронезии": "🇫🇲",
+        "Маршалловы Острова": "🇲🇭",
+        "Палау": "🇵🇼",
+        "Науру": "🇳🇷",
+        "Кирибати": "🇰🇮",
+        "Тувалу": "🇹🇻"
+    }
+}
+
 # Импорт ID из конфига (если нет — пустые словари)
 try:
     from config import CATEGORY_IDS, IDEOLOGY_ROLES, GOVERNMENT_ROLES, RELIGION_ROLES, DEFAULT_PLAYER_ROLE_ID, COUNTRY_ROLES
@@ -895,6 +1060,61 @@ class MarketMenuView(discord.ui.View):
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
 
+class ContinentSelectView(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=120)
+        self.cog = cog
+        for continent in CONTINENTS.keys():
+            self.add_item(ContinentButton(continent, cog))
+
+class ContinentButton(discord.ui.Button):
+    def __init__(self, continent, cog):
+        super().__init__(label=continent, style=discord.ButtonStyle.primary)
+        self.continent = continent
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction):
+        # Создаём Select со странами этого континента
+        countries = CONTINENTS[self.continent]
+        options = []
+        for country, flag in countries.items():
+            options.append(discord.SelectOption(label=country, emoji=flag))
+        select = CountrySelect(self.continent, self.cog, options)
+        view = discord.ui.View()
+        view.add_item(select)
+        await interaction.response.edit_message(content=f"Выберите страну в **{self.continent}**:", view=view)
+
+class CountrySelect(discord.ui.Select):
+    def __init__(self, continent, cog, options):
+        super().__init__(placeholder="Выберите страну...", options=options)
+        self.continent = continent
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction):
+        country_name = self.values[0]
+        # Проверяем, что страна существует и свободна в базе
+        country = await async_fetch_one("SELECT id, name FROM countries WHERE name=? AND owner_id IS NULL", (country_name,))
+        if not country:
+            await interaction.response.send_message(f"❌ Страна **{country_name}** не найдена или уже занята.", ephemeral=True)
+            return
+
+        # Открываем модальное окно для ввода имени правителя
+        modal = RulerNameModal(country_name, self.cog, interaction.user, country['id'])
+        await interaction.response.send_modal(modal)
+
+class RulerNameModal(discord.ui.Modal, title="Введите имя правителя"):
+    ruler_name = discord.ui.TextInput(label="Имя правителя", placeholder="Иван IV", required=True)
+
+    def __init__(self, country_name: str, cog, user: discord.User, country_id: int):
+        super().__init__()
+        self.country_name = country_name
+        self.cog = cog
+        self.user = user
+        self.country_id = country_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Выполняем регистрацию
+        await self.cog._register_country(interaction, self.country_name, self.ruler_name.value, self.country_id, self.user)
 
 # ========================
 # КОГ С КОМАНДАМИ
@@ -903,7 +1123,40 @@ class Game(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-        async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        async def _register_country(self, interaction: discord.Interaction, country: str, ruler_name: str, country_id: int, user: discord.User):
+        # Уже проверено, что страна свободна
+        await async_execute(
+            "UPDATE countries SET owner_id=?, ruler_name=?, display_name=? WHERE id=?",
+            (user.id, ruler_name, country, country_id)
+        )
+        # Роли
+        country_role_id = COUNTRY_ROLES.get(country)
+        if country_role_id:
+            role = interaction.guild.get_role(country_role_id)
+            if role:
+                try: await user.add_roles(role)
+                except: pass
+        if DEFAULT_PLAYER_ROLE_ID:
+            role = interaction.guild.get_role(DEFAULT_PLAYER_ROLE_ID)
+            if role:
+                try: await user.add_roles(role)
+                except: pass
+
+        # Сообщение в канал регистрации
+        reg_channel_id = CHANNEL_IDS.get("registration")
+        if reg_channel_id:
+            reg_channel = self.bot.get_channel(reg_channel_id)
+        else:
+            reg_channel = await self._get_channel_or_create(interaction.guild, "регистрация-стран")
+        if reg_channel:
+            try:
+                await reg_channel.send(f"{user.mention} теперь управляет страной **{country}** как правитель **{ruler_name}**.")
+            except Exception as e:
+                print(f"Не удалось отправить в канал регистраций: {e}")
+
+        await interaction.response.send_message(f"✅ Вы теперь управляете страной **{country}** как **{ruler_name}**! Используйте `/game`.", ephemeral=True)
+    
+    async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         """Обработчик ошибок для всех слеш-команд этого кога."""
         # Если уже был ответ, пытаемся отредактировать или отправить followup
         if interaction.response.is_done():
@@ -954,59 +1207,18 @@ class Game(commands.Cog):
         return channel
 
     # --- Основные команды ---
-    @app_commands.command(name="country_choose", description="Выбрать свободную страну и правителя")
-    @app_commands.autocomplete(country=country_autocomplete)
-    @app_commands.describe(country="Название страны", ruler_name="Ваше имя правителя")
-    async def country_choose(self, interaction: discord.Interaction, country: str, ruler_name: str):
-        # Сразу подтверждаем получение команды, чтобы избежать таймаута
-        await interaction.response.defer(ephemeral=True)
-        try:
-            existing = await self._get_country(interaction.user.id)
-            if existing:
-                await interaction.followup.send(f"Вы уже управляете страной: {existing['name']}. Сначала откажитесь от неё.", ephemeral=True)
-                return
-            row = await async_fetch_one("SELECT id, name FROM countries WHERE name=? AND owner_id IS NULL", (country,))
-            if not row:
-                await interaction.followup.send("Страна не найдена или уже занята.", ephemeral=True)
-                return
-            await async_execute(
-                "UPDATE countries SET owner_id=?, ruler_name=?, display_name=? WHERE id=?",
-                (interaction.user.id, ruler_name, country, row['id'])
-            )
+        @app_commands.command(name="reg", description="Зарегистрироваться как правитель свободной страны")
+    async def reg(self, interaction: discord.Interaction):
+        # Проверяем, не управляет ли уже страной
+        existing = await self._get_country(interaction.user.id)
+        if existing:
+            await interaction.response.send_message(f"Вы уже управляете страной: {existing['name']}. Сначала откажитесь от неё.", ephemeral=True)
+            return
 
-            # Выдача ролей (безопасно)
-            country_role_id = COUNTRY_ROLES.get(country)
-            if country_role_id:
-                role = interaction.guild.get_role(country_role_id)
-                if role:
-                    try:
-                        await interaction.user.add_roles(role)
-                    except Exception as e:
-                        print(f"Не удалось выдать роль страны: {e}")
-            if DEFAULT_PLAYER_ROLE_ID:
-                role = interaction.guild.get_role(DEFAULT_PLAYER_ROLE_ID)
-                if role:
-                    try:
-                        await interaction.user.add_roles(role)
-                    except Exception as e:
-                        print(f"Не удалось выдать роль игрока: {e}")
-
-            # Отправка в канал регистраций
-            reg_channel_id = CHANNEL_IDS.get("registration")
-            if reg_channel_id:
-                reg_channel = self.bot.get_channel(reg_channel_id)
-            else:
-                reg_channel = await self._get_channel_or_create(interaction.guild, "регистрация-стран")
-            if reg_channel:
-                try:
-                    await reg_channel.send(f"{interaction.user.mention} теперь управляет страной **{country}** как правитель **{ruler_name}**.")
-                except Exception as e:
-                    print(f"Не удалось отправить в канал регистраций: {e}")
-
-            await interaction.followup.send(f"Вы теперь управляете страной **{country}** как **{ruler_name}**! Используйте `/game`.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка при выборе страны: {e}", ephemeral=True)
-
+        # Отправляем выбор континента
+        view = ContinentSelectView(self)
+        await interaction.response.send_message("🌍 Выберите континент:", view=view, ephemeral=True)
+        
     @app_commands.command(name="country_leave", description="Отказаться от управления страной")
     async def country_leave(self, interaction: discord.Interaction):
         row = await self._get_country(interaction.user.id)
