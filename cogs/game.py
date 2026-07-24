@@ -1077,25 +1077,107 @@ class ContinentButton(discord.ui.Button):
         self.cog = cog
 
     async def callback(self, interaction: discord.Interaction):
-        countries = CONTINENTS[self.continent]
-        country_items = list(countries.items())  # список кортежей (страна, флаг)
-        view = discord.ui.View()
-        # Discord допускает максимум 25 опций в одном Select
-        if len(country_items) <= 25:
-            options = [discord.SelectOption(label=country, emoji=flag) for country, flag in country_items]
+        # Получаем список стран континента из CONTINENTS, оставляем только те, что есть в БД и свободны
+        countries_in_continent = CONTINENTS[self.continent]
+        free_countries = []
+        for country_name, flag in countries_in_continent.items():
+            # Проверяем в БД, что страна существует и свободна
+            row = await async_fetch_one(
+                "SELECT id FROM countries WHERE name=? AND owner_id IS NULL",
+                (country_name,)
+            )
+            if row:
+                free_countries.append((country_name, flag))
+
+        if not free_countries:
+            await interaction.response.edit_message(
+                content=f"❌ В континенте **{self.continent}** нет свободных стран.",
+                view=ContinentSelectView(self.cog)
+            )
+            return
+
+        # Разбиваем на группы по 25
+        groups = []
+        for i in range(0, len(free_countries), 25):
+            groups.append(free_countries[i:i+25])
+
+        # Если стран <= 25, показываем один Select с кнопкой «Назад к континентам»
+        if len(groups) == 1:
+            options = [discord.SelectOption(label=country, emoji=flag) for country, flag in groups[0]]
             select = CountrySelect(self.continent, self.cog, options)
+            view = discord.ui.View()
             view.add_item(select)
+            view.add_item(BackToContinentsButton(self.cog))
+            await interaction.response.edit_message(
+                content=f"Выберите страну в **{self.continent}**:",
+                view=view
+            )
         else:
-            # Разбиваем на группы по 25
-            for i in range(0, len(country_items), 25):
-                chunk = country_items[i:i+25]
-                start = i + 1
-                end = i + len(chunk)
-                placeholder = f"Страны {start}-{end}"
-                options = [discord.SelectOption(label=country, emoji=flag) for country, flag in chunk]
-                select = CountrySelect(self.continent, self.cog, options, placeholder=placeholder)
-                view.add_item(select)
-        await interaction.response.edit_message(content=f"Выберите страну в **{self.continent}**:", view=view)
+            # Несколько групп – показываем первую группу с кнопками навигации
+            view = ContinentCountriesView(self.cog, self.continent, groups, 0)
+            await interaction.response.edit_message(
+                content=f"Выберите страну в **{self.continent}** (группа 1/{len(groups)}):",
+                view=view
+            )
+
+class BackToContinentsButton(discord.ui.Button):
+    def __init__(self, cog):
+        super().__init__(label="◀ Назад к континентам", style=discord.ButtonStyle.secondary)
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction):
+        view = ContinentSelectView(self.cog)
+        await interaction.response.edit_message(content="🌍 Выберите континент:", view=view)
+
+class ContinentCountriesView(discord.ui.View):
+    def __init__(self, cog, continent, groups, current_group_index):
+        super().__init__(timeout=120)
+        self.cog = cog
+        self.continent = continent
+        self.groups = groups
+        self.current_group_index = current_group_index
+
+        # Создаём Select для текущей группы
+        options = [discord.SelectOption(label=country, emoji=flag) for country, flag in groups[current_group_index]]
+        select = CountrySelect(continent, cog, options)
+        self.add_item(select)
+
+        # Кнопки навигации
+        if current_group_index > 0:
+            self.add_item(PrevGroupButton(cog, continent, groups, current_group_index))
+        if current_group_index < len(groups) - 1:
+            self.add_item(NextGroupButton(cog, continent, groups, current_group_index))
+        self.add_item(BackToContinentsButton(cog))
+
+class PrevGroupButton(discord.ui.Button):
+    def __init__(self, cog, continent, groups, current_index):
+        super().__init__(label="◀ Предыдущая группа", style=discord.ButtonStyle.secondary)
+        self.cog = cog
+        self.continent = continent
+        self.groups = groups
+        self.index = current_index
+
+    async def callback(self, interaction: discord.Interaction):
+        view = ContinentCountriesView(self.cog, self.continent, self.groups, self.index - 1)
+        await interaction.response.edit_message(
+            content=f"Выберите страну в **{self.continent}** (группа {self.index}/{len(self.groups)}):",
+            view=view
+        )
+
+class NextGroupButton(discord.ui.Button):
+    def __init__(self, cog, continent, groups, current_index):
+        super().__init__(label="Следующая группа ▶", style=discord.ButtonStyle.secondary)
+        self.cog = cog
+        self.continent = continent
+        self.groups = groups
+        self.index = current_index
+
+    async def callback(self, interaction: discord.Interaction):
+        view = ContinentCountriesView(self.cog, self.continent, self.groups, self.index + 1)
+        await interaction.response.edit_message(
+            content=f"Выберите страну в **{self.continent}** (группа {self.index + 2}/{len(self.groups)}):",
+            view=view
+        )
 
 class CountrySelect(discord.ui.Select):
     def __init__(self, continent, cog, options, placeholder="Выберите страну..."):
