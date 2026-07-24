@@ -1077,19 +1077,29 @@ class ContinentButton(discord.ui.Button):
         self.cog = cog
 
     async def callback(self, interaction: discord.Interaction):
-        # Создаём Select со странами этого континента
         countries = CONTINENTS[self.continent]
-        options = []
-        for country, flag in countries.items():
-            options.append(discord.SelectOption(label=country, emoji=flag))
-        select = CountrySelect(self.continent, self.cog, options)
+        country_items = list(countries.items())  # список кортежей (страна, флаг)
         view = discord.ui.View()
-        view.add_item(select)
+        # Discord допускает максимум 25 опций в одном Select
+        if len(country_items) <= 25:
+            options = [discord.SelectOption(label=country, emoji=flag) for country, flag in country_items]
+            select = CountrySelect(self.continent, self.cog, options)
+            view.add_item(select)
+        else:
+            # Разбиваем на группы по 25
+            for i in range(0, len(country_items), 25):
+                chunk = country_items[i:i+25]
+                start = i + 1
+                end = i + len(chunk)
+                placeholder = f"Страны {start}-{end}"
+                options = [discord.SelectOption(label=country, emoji=flag) for country, flag in chunk]
+                select = CountrySelect(self.continent, self.cog, options, placeholder=placeholder)
+                view.add_item(select)
         await interaction.response.edit_message(content=f"Выберите страну в **{self.continent}**:", view=view)
 
 class CountrySelect(discord.ui.Select):
-    def __init__(self, continent, cog, options):
-        super().__init__(placeholder="Выберите страну...", options=options)
+    def __init__(self, continent, cog, options, placeholder="Выберите страну..."):
+        super().__init__(placeholder=placeholder, options=options)
         self.continent = continent
         self.cog = cog
 
