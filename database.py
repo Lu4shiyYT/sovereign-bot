@@ -62,7 +62,6 @@ def get_conn():
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-    # Таблицы стран и ресурсов
     cur.execute("""
         CREATE TABLE IF NOT EXISTS countries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,7 +93,6 @@ def init_db():
             army_count INTEGER DEFAULT 0
         )
     """)
-    # Добавление столбцов (на случай старых баз)
     for col, col_def in [
         ('army_count', 'INTEGER DEFAULT 0'),
         ('religion', 'TEXT DEFAULT ""'),
@@ -213,7 +211,6 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
-    # Новые таблицы для войны
     cur.execute("""
         CREATE TABLE IF NOT EXISTS puppets (
             master_id INTEGER,
@@ -239,13 +236,21 @@ def init_db():
         CREATE TABLE IF NOT EXISTS military_assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             country_id INTEGER NOT NULL,
-            asset_type TEXT NOT NULL,   -- 'equipment' или 'weapon'
+            asset_type TEXT NOT NULL,
             asset_name TEXT NOT NULL,
             quantity INTEGER DEFAULT 0,
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
-    # Индексы
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS war_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            war_id INTEGER NOT NULL,
+            report_text TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            FOREIGN KEY (war_id) REFERENCES wars(id)
+        )
+    """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_attacker ON wars(attacker_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_defender ON wars(defender_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_pacts_from ON pacts(from_country)")
