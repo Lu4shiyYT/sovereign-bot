@@ -99,6 +99,12 @@ class Admin(commands.Cog):
             await interaction.response.send_message("Некорректная дата.", ephemeral=True)
             return
         await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1", (day, month, year))
+        # Обновляем голосовой канал с датой
+        voice_channel_id = 1529236474896322583  # ваш ID канала
+        channel = interaction.guild.get_channel(voice_channel_id)
+        if channel and isinstance(channel, discord.VoiceChannel):
+            date_str = f"{day:02d}.{month:02d}.{year}"
+            await channel.edit(name=f"📅 {date_str}")
         await interaction.response.send_message(f"✅ Игровая дата установлена: {day:02d}.{month:02d}.{year}", ephemeral=True)
 
     @app_commands.command(name="backup", description="Сохранить базу данных (файл)")
