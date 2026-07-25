@@ -62,7 +62,7 @@ def get_conn():
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-    # Основные таблицы (без изменений, только добавлены новые)
+    # Таблицы стран и ресурсов
     cur.execute("""
         CREATE TABLE IF NOT EXISTS countries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,34 +94,20 @@ def init_db():
             army_count INTEGER DEFAULT 0
         )
     """)
-    # Добавление новых столбцов (если уже есть, ошибка игнорируется)
-    new_columns = {
-        'ruler_name': 'TEXT DEFAULT ""',
-        'display_name': 'TEXT DEFAULT ""',
-        'religion': 'TEXT DEFAULT ""',
-        'ideology': 'TEXT DEFAULT ""',
-        'government_form': 'TEXT DEFAULT ""',
-        'mobilization': 'INTEGER DEFAULT 0',
-        'aggression_score': 'REAL DEFAULT 50',
-        'last_daily': 'REAL DEFAULT 0',
-        'population': 'INTEGER DEFAULT 0',
-        'army_count': 'INTEGER DEFAULT 0'
-    }
-    # Новые столбцы для стран
-    for col, col_def in {
-        'army_count': 'INTEGER DEFAULT 0',
-        'religion': 'TEXT DEFAULT ""',
-        'government_form': 'TEXT DEFAULT ""',
-        'ideology': 'TEXT DEFAULT ""',
-        'bot_strength': 'INTEGER DEFAULT 1',
-        'budget': 'REAL DEFAULT 0'
-    }.items():
+    # Добавление столбцов (на случай старых баз)
+    for col, col_def in [
+        ('army_count', 'INTEGER DEFAULT 0'),
+        ('religion', 'TEXT DEFAULT ""'),
+        ('government_form', 'TEXT DEFAULT ""'),
+        ('ideology', 'TEXT DEFAULT ""'),
+        ('bot_strength', 'INTEGER DEFAULT 1'),
+        ('budget', 'REAL DEFAULT 0')
+    ]:
         try:
             cur.execute(f"ALTER TABLE countries ADD COLUMN {col} {col_def}")
         except sqlite3.OperationalError:
             pass
 
-    # Таблица для игровой даты
     cur.execute("""
         CREATE TABLE IF NOT EXISTS game_date (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -130,7 +116,6 @@ def init_db():
             day INTEGER DEFAULT 1
         )
     """)
-    # Таблица для хода войны
     cur.execute("""
         CREATE TABLE IF NOT EXISTS war_battles (
             war_id INTEGER PRIMARY KEY,
@@ -138,13 +123,6 @@ def init_db():
             FOREIGN KEY (war_id) REFERENCES wars(id)
         )
     """)
-    
-    for col, col_def in new_columns.items():
-        try:
-            cur.execute(f"ALTER TABLE countries ADD COLUMN {col} {col_def}")
-        except sqlite3.OperationalError:
-            pass
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS provinces (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -217,12 +195,6 @@ def init_db():
             FOREIGN KEY (to_country) REFERENCES countries(id)
         )
     """)
-    for col, col_def in [('sanction_type', 'TEXT DEFAULT ""'), ('affected_param', 'TEXT DEFAULT ""'), ('effect_amount', 'REAL DEFAULT 0')]:
-        try:
-            cur.execute(f"ALTER TABLE sanctions ADD COLUMN {col} {col_def}")
-        except sqlite3.OperationalError:
-            pass
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS alliances (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,9 +213,9 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
-
+    # Новые таблицы для войны
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS puppets (
+        CREATE TABLE IF NOT EXISTS puppets (
             master_id INTEGER,
             puppet_id INTEGER,
             PRIMARY KEY (master_id, puppet_id),
@@ -251,28 +223,18 @@ def init_db():
             FOREIGN KEY (puppet_id) REFERENCES countries(id)
         )
     """)
-
-    # Новые таблицы
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS mobilize_cooldowns (
-            user_id INTEGER,
-            date TEXT,
-            count INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, date)
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS market (
+        CREATE TABLE IF NOT EXISTS war_moves (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            seller_id INTEGER NOT NULL,
-            resource_name TEXT NOT NULL,
-            amount REAL NOT NULL,
-            price REAL NOT NULL,
-            sold INTEGER DEFAULT 0,
-            FOREIGN KEY (seller_id) REFERENCES countries(id)
+            war_id INTEGER NOT NULL,
+            country_id INTEGER NOT NULL,
+            move_type TEXT NOT NULL,
+            details TEXT DEFAULT '',
+            created_at REAL NOT NULL,
+            FOREIGN KEY (war_id) REFERENCES wars(id),
+            FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
-
     # Индексы
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_attacker ON wars(attacker_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_defender ON wars(defender_id)")
