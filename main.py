@@ -20,9 +20,12 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
 # --- Загрузка когов ---
 async def load_cogs():
-    await bot.load_extension("cogs.admin")
-    await bot.load_extension("cogs.game")
-    await bot.load_extension("cogs.war")
+    for module in ["cogs.admin", "cogs.game", "cogs.war"]:
+        try:
+            await bot.load_extension(module)
+            print(f"✅ {module} loaded")
+        except Exception as e:
+            print(f"❌ Failed to load {module}: {e}")
 
 @bot.event
 async def on_ready():
