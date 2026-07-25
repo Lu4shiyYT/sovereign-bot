@@ -1,13 +1,10 @@
 import discord
 from discord.ext import commands, tasks
 import os
-from config import BATTLE_ROUND_INTERVAL_MINUTES
 from keep_alive import keep_alive
-from database import init_db, async_fetch_all, async_execute, async_get_game_date
-import datetime
-import time
+from database import init_db
 
-# Токен читается из переменной окружения (безопасно)
+# Токен читается из переменной окружения
 TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
     print("ОШИБКА: не установлена переменная окружения DISCORD_TOKEN!")
@@ -21,7 +18,7 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
-# --- Загрузка модулей ---
+# --- Загрузка когов ---
 async def load_cogs():
     await bot.load_extension("cogs.admin")
     await bot.load_extension("cogs.game")
@@ -34,12 +31,15 @@ async def on_ready():
     await load_cogs()
     await bot.tree.sync()
     print("Синхронизация команд выполнена.")
+    # Запускаем только месячный доход (боевой цикл теперь в cogs.war)
     if not monthly_income.is_running():
         monthly_income.start()
 
 # --- Фоновая задача: месячный доход (каждые 2 часа = 1 игровой месяц) ---
 @tasks.loop(hours=2)
 async def monthly_income():
+    from database import async_fetch_all, async_execute, async_get_game_date
+    import datetime
     print("Начисление месячного дохода...")
     countries = await async_fetch_all("SELECT * FROM countries WHERE owner_id IS NOT NULL")
     for c in countries:
@@ -100,13 +100,13 @@ async def monthly_income():
             except:
                 pass
 
-    # --- ОБНОВЛЕНИЕ ИГРОВОЙ ДАТЫ И НАЗВАНИЯ КАНАЛА (ПОСЛЕ ЦИКЛА) ---
+    # --- ОБНОВЛЕНИЕ ИГРОВОЙ ДАТЫ И НАЗВАНИЯ КАНАЛА ---
     game_date = await async_get_game_date()
     next_date = game_date + datetime.timedelta(days=1)
     await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1",
                         (next_date.day, next_date.month, next_date.year))
 
-    voice_channel_id = 1529236474896322583   # твой ID голосового канала
+    voice_channel_id = 1529236474896322583   # замените на свой ID
     channel = bot.get_channel(voice_channel_id)
     if channel and isinstance(channel, discord.VoiceChannel):
         try:
@@ -119,10 +119,6 @@ async def monthly_income():
 async def sync_commands(ctx):
     await bot.tree.sync()
     await ctx.send("Команды синхронизированы.")
-
-# Боевой цикл
-@tasks.loop(minutes=BATTLE_ROUND_INTERVAL_MINUTES)
-
 
 # --- Запуск ---
 keep_alive()
