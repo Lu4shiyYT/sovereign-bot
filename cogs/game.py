@@ -814,8 +814,8 @@ class GameMenu(discord.ui.View):
 
     @discord.ui.button(label="⚔️ Война", style=discord.ButtonStyle.danger)
     async def war_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Получаем ког войны динамически – в этот момент он уже точно загружен
-        war_cog = interaction.client.get_cog("War")
+        # Используем war_cog, сохранённый в объекте бота
+        war_cog = getattr(interaction.client, 'war_cog', None)
         if war_cog is None:
             await interaction.response.send_message("Ког войны не загружен.", ephemeral=True)
             return
@@ -1164,53 +1164,6 @@ class PeaceSelect(discord.ui.Select):
         else:
             await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
 
-class BackButton(discord.ui.Button):
-    def __init__(self, country_id):
-        super().__init__(label="◀ Назад", style=discord.ButtonStyle.secondary)
-        self.country_id = country_id
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
-
-class WarPlayerSelect(discord.ui.Select):
-    def __init__(self, country_id, options, war_cog):
-        super().__init__(placeholder="Выберите игрока...", options=options)
-        self.country_id = country_id
-        self.war_cog = war_cog
-
-    async def callback(self, interaction: discord.Interaction):
-        target_id = int(self.values[0])
-        if self.war_cog:
-            await self.war_cog._declare_war(interaction, self.country_id, target_id)
-        else:
-            await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
-
-class WarBotSelect(discord.ui.Select):
-    def __init__(self, country_id, options, war_cog):
-        super().__init__(placeholder="Выберите бота...", options=options)
-        self.country_id = country_id
-        self.war_cog = war_cog
-
-    async def callback(self, interaction: discord.Interaction):
-        target_id = int(self.values[0])
-        if self.war_cog:
-            await self.war_cog._declare_war(interaction, self.country_id, target_id, is_bot=True)
-        else:
-            await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
-
-class PeaceSelect(discord.ui.Select):
-    def __init__(self, country_id, options, war_cog):
-        super().__init__(placeholder="Выберите войну...", options=options)
-        self.country_id = country_id
-        self.war_cog = war_cog
-
-    async def callback(self, interaction: discord.Interaction):
-        war_id = int(self.values[0])
-        if self.war_cog:
-            await self.war_cog._make_peace(interaction, war_id)
-        else:
-            await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
-
 class MarketMenuView(discord.ui.View):
     def __init__(self, country_id):
         super().__init__(timeout=None)
@@ -1251,7 +1204,6 @@ class ContinentButton(discord.ui.Button):
         self.cog = cog
 
     async def callback(self, interaction: discord.Interaction):
-        # Получаем только свободные страны из БД
         countries_in_continent = CONTINENTS[self.continent]
         free_countries = []
         for country_name, flag in countries_in_continent.items():
@@ -1269,7 +1221,6 @@ class ContinentButton(discord.ui.Button):
             )
             return
 
-        # Разбиваем на группы по 25
         groups = []
         for i in range(0, len(free_countries), 25):
             groups.append(free_countries[i:i+25])
@@ -1484,7 +1435,6 @@ class Game(commands.Cog):
         if not country:
             await interaction.response.send_message("Вы не управляете страной. Используйте `/reg`.", ephemeral=True)
             return
-        # Передаём только ID страны, war_cog получаем динамически в меню
         await interaction.response.send_message("Главное меню", view=GameMenu(country['id']), ephemeral=True)
 
     @app_commands.command(name="daily", description="Получить ежедневный бонус ресурсов")
