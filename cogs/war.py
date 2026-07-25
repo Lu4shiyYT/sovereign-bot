@@ -13,7 +13,6 @@ except ImportError:
     CHANNEL_IDS = {}
     BATTLE_ROUND_INTERVAL_MINUTES = 30
 
-# Простейший класс-заглушка для техники (пока не используется)
 MILITARY_EQUIPMENT = {}
 WEAPONS = {}
 
@@ -103,7 +102,6 @@ class War(commands.Cog):
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
     @app_commands.command(name="declare_war_bot", description="Объявить войну свободной стране (бот)")
-    @app_commands.autocomplete(country=country_autocomplete)
     @app_commands.describe(country="Название свободной страны")
     async def declare_war_bot(self, interaction: discord.Interaction, country: str):
         await interaction.response.defer(ephemeral=True)
@@ -226,7 +224,6 @@ class War(commands.Cog):
             if not attacker or not defender:
                 await interaction.followup.send("Страна не найдена.", ephemeral=True)
                 return
-            # Проверяем, не воюют ли они уже
             existing = await async_fetch_one(
                 "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
                 (attacker_id, defender_id, defender_id, attacker_id)
@@ -348,7 +345,6 @@ class War(commands.Cog):
         except discord.Forbidden:
             pass
 
-    # Вспомогательные методы
     async def _get_country(self, user_id):
         return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
 
