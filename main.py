@@ -4,26 +4,23 @@ import os
 from keep_alive import keep_alive
 from database import init_db
 
-# Токен читается из переменной окружения
 TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
     print("ОШИБКА: не установлена переменная окружения DISCORD_TOKEN!")
     exit(1)
 
 PREFIX = "/"
-
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
-# --- Загрузка когов ---
 async def load_cogs():
     modules = [
-        ("cogs.war", "War"),        # сначала War
+        ("cogs.war", "War"),
         ("cogs.admin", "Admin"),
-        ("cogs.game", "Game")       # потом Game
+        ("cogs.game", "Game")
     ]
     for path, name in modules:
         try:
@@ -32,20 +29,16 @@ async def load_cogs():
         except Exception as e:
             print(f"❌ Failed to load {name} ({path}): {e}")
 
-# Назначаем setup_hook, чтобы коги загружались до подключения к Discord
-bot.setup_hook = load_cogs
-
-# --- Событие готовности ---
 @bot.event
 async def on_ready():
     print(f"Бот {bot.user} запущен!")
     init_db()
+    await load_cogs()                         # ← загружаем коги здесь
     await bot.tree.sync()
     print("Синхронизация команд выполнена.")
     if not monthly_income.is_running():
         monthly_income.start()
 
-# --- Фоновая задача: месячный доход (каждые 2 часа = 1 игровой месяц) ---
 @tasks.loop(hours=2)
 async def monthly_income():
     from database import async_fetch_all, async_execute, async_get_game_date
@@ -66,18 +59,15 @@ async def monthly_income():
                 income["Нефть"] += 50 * lvl
             elif b['building_type'] == "Бизнес-центр":
                 income["Доллары"] += 200 * lvl
-
         if c['mobilization']:
             for res in income:
                 income[res] = int(income[res] * 0.5)
-
         for res_name, amount in income.items():
             if amount > 0:
                 await async_execute(
                     "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
                     (c['id'], res_name, amount, amount)
                 )
-
         army_count = c['army_count']
         upkeep_money = int(army_count * 0.1)
         upkeep_food = int(army_count * 0.05)
@@ -85,18 +75,15 @@ async def monthly_income():
             await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (upkeep_money, c['id']))
         if upkeep_food > 0:
             await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (upkeep_food, c['id']))
-
         population = c['population']
         food_consumption = int(population * 0.001)
         if food_consumption > 0:
             await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (food_consumption, c['id']))
-
         growth_rate_year = c['demographic_growth'] / 100.0
         growth_per_month = int(population * growth_rate_year / 12)
         if growth_per_month > 0:
             new_population = population + growth_per_month
             await async_execute("UPDATE countries SET population = ? WHERE id=?", (new_population, c['id']))
-
         user = bot.get_user(c['owner_id'])
         if user:
             try:
@@ -110,13 +97,11 @@ async def monthly_income():
             except:
                 pass
 
-    # --- ОБНОВЛЕНИЕ ИГРОВОЙ ДАТЫ И НАЗВАНИЯ КАНАЛА ---
     game_date = await async_get_game_date()
     next_date = game_date + datetime.timedelta(days=1)
     await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1",
                         (next_date.day, next_date.month, next_date.year))
-
-    voice_channel_id = 1529236474896322583   # ваш ID голосового канала
+    voice_channel_id = 1529236474896322583
     channel = bot.get_channel(voice_channel_id)
     if channel and isinstance(channel, discord.VoiceChannel):
         try:
@@ -130,6 +115,5 @@ async def sync_commands(ctx):
     await bot.tree.sync()
     await ctx.send("Команды синхронизированы.")
 
-# --- Запуск ---
 keep_alive()
 bot.run(TOKEN)
