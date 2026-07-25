@@ -14,9 +14,10 @@ except ImportError:
     CHANNEL_IDS = {}
     BATTLE_ROUND_INTERVAL_MINUTES = 30
 
-from data.military import MILITARY_EQUIPMENT, WEAPONS
+# Временная заглушка, чтобы не зависеть от data.military
+MILITARY_EQUIPMENT = {}
+WEAPONS = {}
 
-# Новостные шаблоны
 WAR_START_NEWS = [
     "⚔️ Конфликт начался! {attacker} под руководством {attacker_ruler} объявил войну {defender}!",
     "💥 Внимание! {attacker} и {defender} вступают в войну. {attacker_ruler} заявил о начале боевых действий.",
@@ -35,12 +36,13 @@ WAR_PEACE_NEWS = [
 class War(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        print("War cog initialized")  # отладка
 
     async def cog_load(self):
+        print("War cog loaded, starting battle loop")
         if not self.battle_loop.is_running():
             self.battle_loop.start()
 
-    # ---------- Боевой цикл (улучшенный) ----------
     @tasks.loop(minutes=BATTLE_ROUND_INTERVAL_MINUTES)
     async def battle_loop(self):
         active_wars = await async_fetch_all("SELECT id, attacker_id, defender_id FROM wars WHERE status='active'")
@@ -55,194 +57,32 @@ class War(commands.Cog):
             if not attacker or not defender:
                 continue
 
-            # Определяем тип атаки из последнего хода (по умолчанию land)
-            attack_type = 'land'
-            attacker_move = await async_fetch_one(
-                "SELECT * FROM war_moves WHERE war_id=? AND country_id=? ORDER BY created_at DESC LIMIT 1",
-                (war['id'], war['attacker_id'])
-            )
-            if attacker_move:
-                try:
-                    details = json.loads(attacker_move['details'])
-                    attack_type = details.get('attack_type', 'land')
-                except:
-                    pass
-
-            defender_move = await async_fetch_one(
-                "SELECT * FROM war_moves WHERE war_id=? AND country_id=? ORDER BY created_at DESC LIMIT 1",
-                (war['id'], war['defender_id'])
-            )
-
-            # Получаем количество техники по категориям
-            attacker_equip = await self._get_equipment_summary(attacker['id'], attack_type)
-            defender_equip = await self._get_equipment_summary(defender['id'], attack_type)
-
-            # Расчёт силы с бонусом от техники
-            def calc_power(country, equip_summary):
+            def calc_power(country):
                 base = country['army_count'] * (country['combat_capability'] / 100)
                 if country['owner_id'] is None:
                     base *= (country.get('bot_strength', 5) / 10)
-                # Бонус от техники: каждая единица даёт +0.1 к силе (условно)
-                tech_bonus = sum(equip_summary.values()) * 0.1
-                return base * (1 + tech_bonus / 100)
+                return base
 
-            atk_power = calc_power(attacker, attacker_equip)
-            def_power = calc_power(defender, defender_equip)
+            atk_power = calc_power(attacker)
+            def_power = calc_power(defender)
 
-            # Потери армии
             def_loss = min(defender['army_count'], int(atk_power * 0.1))
             atk_loss = min(attacker['army_count'], int(def_power * 0.08))
 
             await async_execute("UPDATE countries SET army_count = army_count - ? WHERE id=?", (atk_loss, attacker['id']))
             await async_execute("UPDATE countries SET army_count = army_count - ? WHERE id=?", (def_loss, defender['id']))
 
-            # Потери техники
-            atk_equip_losses = self._distribute_equipment_losses(attacker_equip, int(atk_power * 0.05))
-            def_equip_losses = self._distribute_equipment_losses(defender_equip, int(def_power * 0.05))
-            await self._update_equipment(attacker['id'], atk_equip_losses)
-            await self._update_equipment(defender['id'], def_equip_losses)
-
-            # Обновление времени боя
             if battle:
                 await async_execute("UPDATE war_battles SET last_battle_time=? WHERE war_id=?", (now, war['id']))
             else:
                 await async_execute("INSERT INTO war_battles (war_id, last_battle_time) VALUES (?, ?)", (war['id'], now))
 
-            # Отчёт о потерях
-            await self._send_battle_report(war, attacker, defender, atk_loss, def_loss, atk_equip_losses, def_equip_losses, attack_type)
-
-            # Завершение войны, если армия кончилась
             if attacker['army_count'] <= 0 or defender['army_count'] <= 0:
                 winner = attacker if attacker['army_count'] > 0 else defender
                 loser = defender if winner == attacker else attacker
                 await async_execute("UPDATE wars SET status='ended' WHERE id=?", (war['id'],))
                 await self._offer_post_war_terms(war, winner, loser)
 
-    async def _get_equipment_summary(self, country_id: int, attack_type: str) -> dict:
-        """Собирает количество техники, подходящей для типа атаки."""
-        categories = []
-        if attack_type == 'land':
-            categories = ['сухопутные', 'беспилотные аппараты', 'разведка']
-        elif attack_type == 'air':
-            categories = ['воздушные', 'беспилотные аппараты']
-        elif attack_type == 'naval':
-            categories = ['морские', 'беспилотные аппараты']
-        else:
-            categories = ['сухопутные']
-
-        rows = await async_fetch_all(
-            "SELECT asset_name, quantity FROM military_assets WHERE country_id=? AND asset_type='equipment'",
-            (country_id,)
-        )
-        summary = {}
-        for row in rows:
-            for cat in categories:
-                if row['asset_name'] in MILITARY_EQUIPMENT.get(cat, []):
-                    summary[row['asset_name']] = summary.get(row['asset_name'], 0) + row['quantity']
-                    break
-        return summary
-
-    def _distribute_equipment_losses(self, equipment: dict, total_loss: int) -> dict:
-        """Распределяет потери по типам техники пропорционально их количеству."""
-        if not equipment or total_loss <= 0:
-            return {}
-        total_qty = sum(equipment.values())
-        if total_qty == 0:
-            return {}
-        losses = {}
-        for name, qty in equipment.items():
-            loss = int(total_loss * (qty / total_qty))
-            if loss > 0:
-                losses[name] = min(loss, qty)
-        return losses
-
-    async def _update_equipment(self, country_id: int, losses: dict):
-        """Применяет потери техники."""
-        for name, loss in losses.items():
-            await async_execute(
-                "UPDATE military_assets SET quantity = quantity - ? WHERE country_id=? AND asset_name=? AND asset_type='equipment'",
-                (loss, country_id, name)
-            )
-
-    async def _send_battle_report(self, war, attacker, defender, atk_loss, def_loss, atk_equip_losses, def_equip_losses, attack_type):
-        """Формирует и отправляет отчёт о боевых действиях."""
-        attacker_name = attacker['display_name'] or attacker['name']
-        defender_name = defender['display_name'] or defender['name']
-        report = (
-            f"**⚔️ Боевое столкновение ({attack_type})**\n"
-            f"**{attacker_name}** vs **{defender_name}**\n\n"
-            f"**Потери в живой силе:**\n"
-            f"🔹 {attacker_name}: {atk_loss} солдат\n"
-            f"🔹 {defender_name}: {def_loss} солдат\n\n"
-            f"**Потери техники:**\n"
-        )
-        if atk_equip_losses:
-            report += f"🔹 {attacker_name}:\n" + "\n".join(f"   - {k}: {v} ед." for k,v in atk_equip_losses.items()) + "\n"
-        else:
-            report += f"🔹 {attacker_name}: нет\n"
-        if def_equip_losses:
-            report += f"🔹 {defender_name}:\n" + "\n".join(f"   - {k}: {v} ед." for k,v in def_equip_losses.items()) + "\n"
-        else:
-            report += f"🔹 {defender_name}: нет\n"
-
-        # Отправка в канал war_reports
-        war_channel_id = CHANNEL_IDS.get("war_reports")
-        if war_channel_id:
-            channel = self.bot.get_channel(war_channel_id)
-        else:
-            channel = None
-        if channel:
-            await channel.send(report)
-
-        # Отправка в ЛС владельцам
-        if attacker['owner_id']:
-            await self._notify_user(attacker['owner_id'], report)
-        if defender['owner_id']:
-            await self._notify_user(defender['owner_id'], report)
-
-    # ---------- Покупка техники ----------
-    @app_commands.command(name="buy_equipment", description="Купить военную технику (упрощённо)")
-    @app_commands.describe(equipment_name="Название техники", quantity="Количество")
-    async def buy_equipment(self, interaction: discord.Interaction, equipment_name: str, quantity: int):
-        if quantity <= 0:
-            await interaction.response.send_message("Количество должно быть положительным.", ephemeral=True)
-            return
-        country = await self._get_country(interaction.user.id)
-        if not country:
-            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
-            return
-
-        # Проверяем, существует ли такая техника в справочнике
-        valid = False
-        for cat, items in MILITARY_EQUIPMENT.items():
-            if equipment_name in items:
-                valid = True
-                break
-        if not valid:
-            await interaction.response.send_message("Такой техники не существует.", ephemeral=True)
-            return
-
-        cost = 1000 * quantity  # 1000 долларов за единицу
-        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
-        if not money_row or money_row['amount'] < cost:
-            await interaction.response.send_message("Недостаточно денег.", ephemeral=True)
-            return
-
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (cost, country['id']))
-        existing = await async_fetch_one(
-            "SELECT id, quantity FROM military_assets WHERE country_id=? AND asset_type='equipment' AND asset_name=?",
-            (country['id'], equipment_name)
-        )
-        if existing:
-            await async_execute("UPDATE military_assets SET quantity = quantity + ? WHERE id=?", (quantity, existing['id']))
-        else:
-            await async_execute(
-                "INSERT INTO military_assets (country_id, asset_type, asset_name, quantity) VALUES (?, 'equipment', ?, ?)",
-                (country['id'], equipment_name, quantity)
-            )
-        await interaction.response.send_message(f"✅ Куплено {quantity} ед. {equipment_name} за {cost}$.", ephemeral=True)
-
-    # ---------- ОБЪЯВЛЕНИЕ ВОЙНЫ (ИГРОК) ----------
     @app_commands.command(name="declare_war", description="Объявить войну стране, управляемой игроком")
     @app_commands.describe(target="Игрок, управляющий страной")
     async def declare_war_player(self, interaction: discord.Interaction, target: discord.Member):
@@ -335,7 +175,6 @@ class War(commands.Cog):
 
         await interaction.followup.send(f"Война объявлена стране {defender_name}.", ephemeral=True)
 
-    # ---------- МИРНЫЙ ДОГОВОР ----------
     @app_commands.command(name="peace_treaty", description="Предложить мир противнику")
     async def peace_treaty(self, interaction: discord.Interaction, target: discord.Member):
         if target.id == interaction.user.id:
@@ -378,7 +217,7 @@ class War(commands.Cog):
             pass
         await interaction.response.send_message(f"Мир заключён с {target_country['name']}.", ephemeral=True)
 
-    # ---------- ВНУТРЕННИЕ МЕТОДЫ ДЛЯ VIEW (ИЗ GAME.PY) ----------
+    # Внутренние методы для View из game.py
     async def _declare_war(self, interaction: discord.Interaction, attacker_id: int, defender_id: int, is_bot: bool = False):
         await interaction.response.defer(ephemeral=True)
         attacker = await async_fetch_one("SELECT * FROM countries WHERE id=?", (attacker_id,))
@@ -428,11 +267,9 @@ class War(commands.Cog):
                     pass
         await interaction.followup.send("Мир заключён.", ephemeral=True)
 
-    # ---------- ПОШАГОВЫЙ ХОД ----------
     @app_commands.command(name="war_action", description="Совершить ход в войне (раз в 30 минут)")
     @app_commands.describe(
         action="Тип действия",
-        attack_type="Тип атаки (land/air/naval)",
         target_army_percent="Процент армии (1-100)"
     )
     @app_commands.choices(action=[
@@ -441,12 +278,7 @@ class War(commands.Cog):
         app_commands.Choice(name="Разведка", value="scout"),
         app_commands.Choice(name="Смена тактики", value="tactics")
     ])
-    @app_commands.choices(attack_type=[
-        app_commands.Choice(name="Наземная", value="land"),
-        app_commands.Choice(name="Воздушная", value="air"),
-        app_commands.Choice(name="Морская", value="naval")
-    ])
-    async def war_action(self, interaction: discord.Interaction, action: str, attack_type: str = 'land', target_army_percent: int = 100):
+    async def war_action(self, interaction: discord.Interaction, action: str, target_army_percent: int = 100):
         await interaction.response.defer(ephemeral=True)
         try:
             my_country = await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (interaction.user.id,))
@@ -478,21 +310,15 @@ class War(commands.Cog):
                 await interaction.followup.send("Вы уже отдали приказ в этом получасовом интервале.", ephemeral=True)
                 return
 
-            details = json.dumps({"action": action, "attack_type": attack_type, "army_percent": target_army_percent})
             await async_execute(
                 "INSERT INTO war_moves (war_id, country_id, move_type, details, created_at) VALUES (?, ?, ?, ?, ?)",
-                (war['id'], my_country['id'], action, details, now.timestamp())
+                (war['id'], my_country['id'], action, "{}", now.timestamp())
             )
 
-            action_names = {"attack": "Атака", "defend": "Оборона", "scout": "Разведка", "tactics": "Смена тактики"}
-            await interaction.followup.send(
-                f"✅ Приказ **{action_names[action]}** ({attack_type}) принят (использовано {target_army_percent}% армии).",
-                ephemeral=True
-            )
+            await interaction.followup.send(f"✅ Приказ **{action}** принят.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
-    # ---------- ПОСЛЕВОЕННЫЕ УСЛОВИЯ ----------
     async def _offer_post_war_terms(self, war, winner, loser):
         if winner['owner_id'] is None:
             return
@@ -508,7 +334,7 @@ class War(commands.Cog):
         except discord.Forbidden:
             pass
 
-    # ---------- ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ----------
+    # Вспомогательные методы
     async def _get_country(self, user_id):
         return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
 
@@ -546,7 +372,6 @@ class War(commands.Cog):
             return []
 
 
-# ---------- VIEW ДЛЯ ПОСЛЕВОЕННЫХ УСЛОВИЙ ----------
 class PostWarView(discord.ui.View):
     def __init__(self, war_id, winner_id, loser_id):
         super().__init__(timeout=86400)
@@ -582,4 +407,6 @@ class PostWarView(discord.ui.View):
 
 
 async def setup(bot):
+    print("Adding War cog...")
     await bot.add_cog(War(bot))
+    print("War cog added successfully.")
