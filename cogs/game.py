@@ -788,11 +788,9 @@ class AlliancesView(discord.ui.View):
         await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
 
 class GameMenu(discord.ui.View):
-    def __init__(self, country_id, war_cog=None):
+    def __init__(self, country_id):
         super().__init__(timeout=None)
         self.country_id = country_id
-        # Если war_cog не передан, берём из бота (на случай вызова из старых View)
-        self.war_cog = war_cog
 
     @discord.ui.button(label="🏭 Постройки", style=discord.ButtonStyle.primary)
     async def buildings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -816,10 +814,8 @@ class GameMenu(discord.ui.View):
 
     @discord.ui.button(label="⚔️ Война", style=discord.ButtonStyle.danger)
     async def war_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Получаем war_cog: либо из атрибута, либо через get_cog
-        war_cog = self.war_cog
-        if war_cog is None:
-            war_cog = interaction.client.get_cog("War")
+        # Получаем ког войны динамически – в этот момент он уже точно загружен
+        war_cog = interaction.client.get_cog("War")
         if war_cog is None:
             await interaction.response.send_message("Ког войны не загружен.", ephemeral=True)
             return
@@ -1168,6 +1164,53 @@ class PeaceSelect(discord.ui.Select):
         else:
             await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
 
+class BackButton(discord.ui.Button):
+    def __init__(self, country_id):
+        super().__init__(label="◀ Назад", style=discord.ButtonStyle.secondary)
+        self.country_id = country_id
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
+
+class WarPlayerSelect(discord.ui.Select):
+    def __init__(self, country_id, options, war_cog):
+        super().__init__(placeholder="Выберите игрока...", options=options)
+        self.country_id = country_id
+        self.war_cog = war_cog
+
+    async def callback(self, interaction: discord.Interaction):
+        target_id = int(self.values[0])
+        if self.war_cog:
+            await self.war_cog._declare_war(interaction, self.country_id, target_id)
+        else:
+            await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
+
+class WarBotSelect(discord.ui.Select):
+    def __init__(self, country_id, options, war_cog):
+        super().__init__(placeholder="Выберите бота...", options=options)
+        self.country_id = country_id
+        self.war_cog = war_cog
+
+    async def callback(self, interaction: discord.Interaction):
+        target_id = int(self.values[0])
+        if self.war_cog:
+            await self.war_cog._declare_war(interaction, self.country_id, target_id, is_bot=True)
+        else:
+            await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
+
+class PeaceSelect(discord.ui.Select):
+    def __init__(self, country_id, options, war_cog):
+        super().__init__(placeholder="Выберите войну...", options=options)
+        self.country_id = country_id
+        self.war_cog = war_cog
+
+    async def callback(self, interaction: discord.Interaction):
+        war_id = int(self.values[0])
+        if self.war_cog:
+            await self.war_cog._make_peace(interaction, war_id)
+        else:
+            await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
+
 class MarketMenuView(discord.ui.View):
     def __init__(self, country_id):
         super().__init__(timeout=None)
@@ -1339,9 +1382,6 @@ class RulerNameModal(discord.ui.Modal, title="Введите имя правит
 class Game(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.war_cog = self.bot.get_cog("War")
-        if self.war_cog is None:
-            print("⚠️ War cog not found in Game.__init__")
 
     async def _register_country(self, interaction: discord.Interaction, country: str, ruler_name: str, country_id: int, user: discord.User):
         await async_execute(
@@ -1444,8 +1484,8 @@ class Game(commands.Cog):
         if not country:
             await interaction.response.send_message("Вы не управляете страной. Используйте `/reg`.", ephemeral=True)
             return
-        # Передаём war_cog в GameMenu
-        await interaction.response.send_message("Главное меню", view=GameMenu(country['id'], self.war_cog), ephemeral=True)
+        # Передаём только ID страны, war_cog получаем динамически в меню
+        await interaction.response.send_message("Главное меню", view=GameMenu(country['id']), ephemeral=True)
 
     @app_commands.command(name="daily", description="Получить ежедневный бонус ресурсов")
     async def daily(self, interaction: discord.Interaction):
