@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 import os
+import sys
 from keep_alive import keep_alive
 from database import init_db
 
@@ -16,7 +17,7 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
-# ---------- Функция загрузки когов ----------
+# --- Загрузка когов (выполняется сразу, до запуска бота) ---
 async def load_cogs():
     modules = [
         ("cogs.war", "War"),
@@ -26,37 +27,36 @@ async def load_cogs():
     for path, name in modules:
         try:
             await bot.load_extension(path)
-            print(f"✅ {name} loaded")
+            print(f"✅ {name} loaded", flush=True)
         except Exception as e:
-            print(f"❌ Failed to load {name} ({path}): {e}")
+            print(f"❌ Failed to load {name} ({path}): {e}", flush=True)
 
-    # Сохраняем ссылку на War в боте, чтобы game.py мог взять её гарантированно
+    # Сохраняем ссылку на War
     bot.war_cog = bot.get_cog("War")
-    if bot.war_cog is None:
-        print("⚠️ War cog is None after loading!")
+    if bot.war_cog:
+        print("✅ bot.war_cog установлен", flush=True)
+    else:
+        print("⚠️ bot.war_cog = None после загрузки", flush=True)
 
-# ---------- setup_hook вызывается ДО подключения к Discord ----------
-async def setup_hook():
-    await load_cogs()
+# Вызываем загрузку прямо здесь, до bot.run
+import asyncio
+asyncio.get_event_loop().run_until_complete(load_cogs())
 
-bot.setup_hook = setup_hook
-
-# ---------- Событие готовности ----------
 @bot.event
 async def on_ready():
-    print(f"Бот {bot.user} запущен!")
+    print(f"Бот {bot.user} запущен!", flush=True)
     init_db()
     await bot.tree.sync()
-    print("Синхронизация команд выполнена.")
+    print("Синхронизация команд выполнена.", flush=True)
     if not monthly_income.is_running():
         monthly_income.start()
 
-# ---------- Месячный доход ----------
+# --- Месячный доход ---
 @tasks.loop(hours=2)
 async def monthly_income():
     from database import async_fetch_all, async_execute, async_get_game_date
     import datetime
-    print("Начисление месячного дохода...")
+    print("Начисление месячного дохода...", flush=True)
     countries = await async_fetch_all("SELECT * FROM countries WHERE owner_id IS NOT NULL")
     for c in countries:
         income = {"Доллары": 0, "Продовольствие": 0, "Нефть": 0}
@@ -120,7 +120,7 @@ async def monthly_income():
         try:
             await channel.edit(name=f"📅 {next_date.strftime('%d.%m.%Y')}")
         except Exception as e:
-            print(f"Не удалось изменить название канала: {e}")
+            print(f"Не удалось изменить название канала: {e}", flush=True)
 
 @bot.command(name="sync")
 @commands.is_owner()
