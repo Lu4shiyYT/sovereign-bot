@@ -16,6 +16,7 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
+# ---------- Функция загрузки когов ----------
 async def load_cogs():
     modules = [
         ("cogs.war", "War"),
@@ -29,16 +30,28 @@ async def load_cogs():
         except Exception as e:
             print(f"❌ Failed to load {name} ({path}): {e}")
 
+    # Сохраняем ссылку на War в боте, чтобы game.py мог взять её гарантированно
+    bot.war_cog = bot.get_cog("War")
+    if bot.war_cog is None:
+        print("⚠️ War cog is None after loading!")
+
+# ---------- setup_hook вызывается ДО подключения к Discord ----------
+async def setup_hook():
+    await load_cogs()
+
+bot.setup_hook = setup_hook
+
+# ---------- Событие готовности ----------
 @bot.event
 async def on_ready():
     print(f"Бот {bot.user} запущен!")
     init_db()
-    await load_cogs()                         # ← загружаем коги здесь
     await bot.tree.sync()
     print("Синхронизация команд выполнена.")
     if not monthly_income.is_running():
         monthly_income.start()
 
+# ---------- Месячный доход ----------
 @tasks.loop(hours=2)
 async def monthly_income():
     from database import async_fetch_all, async_execute, async_get_game_date
