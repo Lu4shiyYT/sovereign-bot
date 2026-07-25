@@ -17,7 +17,6 @@ intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
-bot.setup_hook = load_cogs
 
 # --- Загрузка когов ---
 async def load_cogs():
@@ -33,6 +32,10 @@ async def load_cogs():
         except Exception as e:
             print(f"❌ Failed to load {name} ({path}): {e}")
 
+# Назначаем setup_hook, чтобы коги загружались до подключения к Discord
+bot.setup_hook = load_cogs
+
+# --- Событие готовности ---
 @bot.event
 async def on_ready():
     print(f"Бот {bot.user} запущен!")
@@ -113,7 +116,7 @@ async def monthly_income():
     await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1",
                         (next_date.day, next_date.month, next_date.year))
 
-    voice_channel_id = 1529236474896322583
+    voice_channel_id = 1529236474896322583   # ваш ID голосового канала
     channel = bot.get_channel(voice_channel_id)
     if channel and isinstance(channel, discord.VoiceChannel):
         try:
