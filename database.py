@@ -235,6 +235,16 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS military_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            country_id INTEGER NOT NULL,
+            asset_type TEXT NOT NULL,   -- 'equipment' или 'weapon'
+            asset_name TEXT NOT NULL,
+            quantity INTEGER DEFAULT 0,
+            FOREIGN KEY (country_id) REFERENCES countries(id)
+        )
+    """)
     # Индексы
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_attacker ON wars(attacker_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_defender ON wars(defender_id)")
