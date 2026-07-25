@@ -21,9 +21,9 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 # --- Загрузка когов ---
 async def load_cogs():
     modules = [
-        ("cogs.war", "War"),
+        ("cogs.war", "War"),        # сначала War
         ("cogs.admin", "Admin"),
-        ("cogs.game", "Game")
+        ("cogs.game", "Game")       # потом Game
     ]
     for path, name in modules:
         try:
@@ -39,7 +39,6 @@ async def on_ready():
     await load_cogs()
     await bot.tree.sync()
     print("Синхронизация команд выполнена.")
-    # Запускаем только месячный доход (боевой цикл теперь в cogs.war)
     if not monthly_income.is_running():
         monthly_income.start()
 
@@ -114,7 +113,7 @@ async def monthly_income():
     await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1",
                         (next_date.day, next_date.month, next_date.year))
 
-    voice_channel_id = 1529236474896322583   # замените на свой ID
+    voice_channel_id = 1529236474896322583
     channel = bot.get_channel(voice_channel_id)
     if channel and isinstance(channel, discord.VoiceChannel):
         try:
