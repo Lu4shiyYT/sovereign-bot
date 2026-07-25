@@ -814,7 +814,12 @@ class GameMenu(discord.ui.View):
 
     @discord.ui.button(label="⚔️ Война", style=discord.ButtonStyle.danger)
     async def war_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="Военные действия", view=WarMenuView(self.country_id))
+        # Получаем ког войны
+        war_cog = interaction.client.get_cog("War")
+        if war_cog is None:
+            await interaction.response.send_message("Ког войны не загружен.", ephemeral=True)
+            return
+        await interaction.response.edit_message(content="Военные действия", view=WarMenuView(self.country_id, war_cog))
 
     @discord.ui.button(label="🛡️ Армия", style=discord.ButtonStyle.primary)
     async def army_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1010,9 +1015,10 @@ class GovernmentView(discord.ui.View):
 # VIEW: ВОЙНА (НОВЫЙ ИНТЕРАКТИВНЫЙ)
 # ========================
 class WarMenuView(discord.ui.View):
-    def __init__(self, country_id):
+    def __init__(self, country_id, war_cog):
         super().__init__(timeout=None)
         self.country_id = country_id
+        self.war_cog = war_cog
 
     @discord.ui.button(label="⚔️ Объявить войну игроку", style=discord.ButtonStyle.danger)
     async def war_player_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1126,9 +1132,8 @@ class WarPlayerSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         target_id = int(self.values[0])
-        war_cog = interaction.client.get_cog("War")
-        if war_cog:
-            await war_cog._declare_war(interaction, self.country_id, target_id)
+        if self.view.war_cog:
+            await self.view.war_cog._declare_war(interaction, self.country_id, target_id)
         else:
             await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
 
@@ -1139,9 +1144,8 @@ class WarBotSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         target_id = int(self.values[0])
-        war_cog = interaction.client.get_cog("War")
-        if war_cog:
-            await war_cog._declare_war(interaction, self.country_id, target_id, is_bot=True)
+        if self.view.war_cog:
+            await self.view.war_cog._declare_war(interaction, self.country_id, target_id, is_bot=True)
         else:
             await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
 
@@ -1152,9 +1156,8 @@ class PeaceSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         war_id = int(self.values[0])
-        war_cog = interaction.client.get_cog("War")
-        if war_cog:
-            await war_cog._make_peace(interaction, war_id)
+        if self.view.war_cog:
+            await self.view.war_cog._make_peace(interaction, war_id)
         else:
             await interaction.response.send_message("Ошибка: ког войны не найден.", ephemeral=True)
 
