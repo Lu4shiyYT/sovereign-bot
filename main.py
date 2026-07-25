@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands, tasks
 import os
-import sys
 from keep_alive import keep_alive
 from database import init_db
 
@@ -17,7 +16,7 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
-# --- Загрузка когов (выполняется сразу, до запуска бота) ---
+# ---------- Загрузка когов ----------
 async def load_cogs():
     modules = [
         ("cogs.war", "War"),
@@ -31,27 +30,17 @@ async def load_cogs():
         except Exception as e:
             print(f"❌ Failed to load {name} ({path}): {e}", flush=True)
 
-    # Сохраняем ссылку на War
-    bot.war_cog = bot.get_cog("War")
-    if bot.war_cog:
-        print("✅ bot.war_cog установлен", flush=True)
-    else:
-        print("⚠️ bot.war_cog = None после загрузки", flush=True)
-
-# Вызываем загрузку прямо здесь, до bot.run
-import asyncio
-asyncio.get_event_loop().run_until_complete(load_cogs())
-
 @bot.event
 async def on_ready():
     print(f"Бот {bot.user} запущен!", flush=True)
     init_db()
+    await load_cogs()                # <-- загружаем коги здесь
     await bot.tree.sync()
     print("Синхронизация команд выполнена.", flush=True)
     if not monthly_income.is_running():
         monthly_income.start()
 
-# --- Месячный доход ---
+# ---------- Месячный доход ----------
 @tasks.loop(hours=2)
 async def monthly_income():
     from database import async_fetch_all, async_execute, async_get_game_date
