@@ -791,6 +791,7 @@ class GameMenu(discord.ui.View):
     def __init__(self, country_id):
         super().__init__(timeout=None)
         self.country_id = country_id
+        self.war_cog = war_cog
 
     @discord.ui.button(label="🏭 Постройки", style=discord.ButtonStyle.primary)
     async def buildings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -814,12 +815,10 @@ class GameMenu(discord.ui.View):
 
     @discord.ui.button(label="⚔️ Война", style=discord.ButtonStyle.danger)
     async def war_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Получаем ког войны
-        war_cog = interaction.client.get_cog("War")
-        if war_cog is None:
+        if self.war_cog is None:
             await interaction.response.send_message("Ког войны не загружен.", ephemeral=True)
             return
-        await interaction.response.edit_message(content="Военные действия", view=WarMenuView(self.country_id, war_cog))
+        await interaction.response.edit_message(content="Военные действия", view=WarMenuView(self.country_id, self.war_cog))
 
     @discord.ui.button(label="🛡️ Армия", style=discord.ButtonStyle.primary)
     async def army_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1332,6 +1331,9 @@ class RulerNameModal(discord.ui.Modal, title="Введите имя правит
 class Game(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.war_cog = self.bot.get_cog("War")
+        if self.war_cog is None:
+            print("⚠️ War cog not found in Game.__init__")
 
     async def _register_country(self, interaction: discord.Interaction, country: str, ruler_name: str, country_id: int, user: discord.User):
         await async_execute(
@@ -1434,7 +1436,7 @@ class Game(commands.Cog):
         if not country:
             await interaction.response.send_message("Вы не управляете страной. Используйте `/reg`.", ephemeral=True)
             return
-        await interaction.response.send_message("Главное меню", view=GameMenu(country['id']), ephemeral=True)
+        await interaction.response.send_message("Главное меню", view=GameMenu(country['id'], self.war_cog), ephemeral=True)
 
     @app_commands.command(name="daily", description="Получить ежедневный бонус ресурсов")
     async def daily(self, interaction: discord.Interaction):
