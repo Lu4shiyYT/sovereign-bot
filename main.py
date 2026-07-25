@@ -17,6 +17,7 @@ intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
+bot.setup_hook = load_cogs
 
 # --- Загрузка когов ---
 async def load_cogs():
@@ -36,7 +37,6 @@ async def load_cogs():
 async def on_ready():
     print(f"Бот {bot.user} запущен!")
     init_db()
-    await load_cogs()
     await bot.tree.sync()
     print("Синхронизация команд выполнена.")
     if not monthly_income.is_running():
