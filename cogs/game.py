@@ -122,7 +122,7 @@ CONTINENTS = {
         "Бурунди": "🇧🇮",
         "Южный Судан": "🇸🇸",
         "Нигер": "🇳🇪",
-        "ЦАР": "🇨🇫",
+        "ЦАР": "🇨🇫"
     },
     "Северная Америка": {
         "США": "🇺🇸",
@@ -324,22 +324,6 @@ MOBILIZE_OFF_NEWS = [
     "🔔 {ruler} подписал указ о демобилизации в {country}. Военное положение снято.",
     "✅ В {country} завершена мобилизация. {ruler} поблагодарил граждан за службу.",
     "🏳️ {country} возвращается к мирной жизни. Мобилизационные мероприятия прекращены."
-]
-
-# Новости о войне
-WAR_START_NEWS = [
-    "⚔️ Конфликт начался! {attacker} под руководством {attacker_ruler} объявил войну {defender}!",
-    "💥 Внимание! {attacker} и {defender} вступают в войну. {attacker_ruler} заявил о начале боевых действий.",
-    "🚀 Военная тревога! {attacker} атакует {defender}. {attacker_ruler} отдал приказ о наступлении.",
-    "🌍 Мир раскололся: {attacker} объявил войну {defender}. Правитель {attacker_ruler} выступил с обращением.",
-    "🔥 Пламя войны: {attacker} начинает вторжение в {defender}. {attacker_ruler} взял на себя ответственность."
-]
-WAR_PEACE_NEWS = [
-    "🕊️ Мир восстановлен! {country1} и {country2} заключили мирный договор.",
-    "✅ Война окончена: {country1} и {country2} пришли к соглашению о прекращении огня.",
-    "🤝 Дипломатия победила: {country1} и {country2} подписали мир.",
-    "📜 Исторический мир: {country1} и {country2} завершили военный конфликт.",
-    "🔚 Конец войны: {country1} и {country2} объявили о перемирии."
 ]
 
 LENDLEASE_MONEY_NEWS = [
@@ -1022,6 +1006,9 @@ class GovernmentView(discord.ui.View):
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
 
+# ========================
+# VIEW: ВОЙНА (НОВЫЙ ИНТЕРАКТИВНЫЙ)
+# ========================
 class WarMenuView(discord.ui.View):
     def __init__(self, country_id):
         super().__init__(timeout=None)
@@ -1029,13 +1016,11 @@ class WarMenuView(discord.ui.View):
 
     @discord.ui.button(label="⚔️ Объявить войну игроку", style=discord.ButtonStyle.danger)
     async def war_player_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Получаем список всех стран, управляемых игроками, с которыми нет активной войны
         my_country = await async_fetch_one("SELECT id FROM countries WHERE id=?", (self.country_id,))
         if not my_country:
             await interaction.response.send_message("Ошибка.", ephemeral=True)
             return
 
-        # Ищем страны, которыми управляют люди и с которыми нет войны
         active_wars = await async_fetch_all(
             "SELECT CASE WHEN attacker_id = ? THEN defender_id ELSE attacker_id END AS enemy "
             "FROM wars WHERE (attacker_id = ? OR defender_id = ?) AND status = 'active'",
@@ -1071,7 +1056,6 @@ class WarMenuView(discord.ui.View):
             await interaction.response.send_message("Ошибка.", ephemeral=True)
             return
 
-        # Получаем свободные страны (боты), с которыми нет войны
         active_wars = await async_fetch_all(
             "SELECT CASE WHEN attacker_id = ? THEN defender_id ELSE attacker_id END AS enemy "
             "FROM wars WHERE (attacker_id = ? OR defender_id = ?) AND status = 'active'",
@@ -1096,7 +1080,6 @@ class WarMenuView(discord.ui.View):
 
     @discord.ui.button(label="🕊️ Предложить мир", style=discord.ButtonStyle.primary)
     async def peace_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Показываем список стран, с которыми идёт война
         wars = await async_fetch_all(
             "SELECT w.id AS war_id, CASE WHEN w.attacker_id = ? THEN w.defender_id ELSE w.attacker_id END AS enemy_id "
             "FROM wars w WHERE (w.attacker_id = ? OR w.defender_id = ?) AND w.status = 'active'",
@@ -1129,7 +1112,6 @@ class WarMenuView(discord.ui.View):
         await interaction.response.edit_message(content="Главное меню", view=GameMenu(self.country_id))
 
 class BackButton(discord.ui.Button):
-    """Универсальная кнопка возврата в главное меню."""
     def __init__(self, country_id):
         super().__init__(label="◀ Назад", style=discord.ButtonStyle.secondary)
         self.country_id = country_id
@@ -1144,9 +1126,6 @@ class WarPlayerSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         target_id = int(self.values[0])
-        # Вызываем логику объявления войны (перенесём из команды)
-        # Здесь мы используем метод из кога War, но так как мы внутри game.py, можем вызвать напрямую.
-        # Проще отправить команду через interaction.client.get_cog("War")
         war_cog = interaction.client.get_cog("War")
         if war_cog:
             await war_cog._declare_war(interaction, self.country_id, target_id)
@@ -1219,11 +1198,10 @@ class ContinentButton(discord.ui.Button):
         self.cog = cog
 
     async def callback(self, interaction: discord.Interaction):
-        # Получаем список стран континента из CONTINENTS, оставляем только те, что есть в БД и свободны
+        # Получаем только свободные страны из БД
         countries_in_continent = CONTINENTS[self.continent]
         free_countries = []
         for country_name, flag in countries_in_continent.items():
-            # Проверяем в БД, что страна существует и свободна
             row = await async_fetch_one(
                 "SELECT id FROM countries WHERE name=? AND owner_id IS NULL",
                 (country_name,)
@@ -1243,7 +1221,6 @@ class ContinentButton(discord.ui.Button):
         for i in range(0, len(free_countries), 25):
             groups.append(free_countries[i:i+25])
 
-        # Если стран <= 25, показываем один Select с кнопкой «Назад к континентам»
         if len(groups) == 1:
             options = [discord.SelectOption(label=country, emoji=flag) for country, flag in groups[0]]
             select = CountrySelect(self.continent, self.cog, options)
@@ -1255,7 +1232,6 @@ class ContinentButton(discord.ui.Button):
                 view=view
             )
         else:
-            # Несколько групп – показываем первую группу с кнопками навигации
             view = ContinentCountriesView(self.cog, self.continent, groups, 0)
             await interaction.response.edit_message(
                 content=f"Выберите страну в **{self.continent}** (группа 1/{len(groups)}):",
@@ -1279,12 +1255,10 @@ class ContinentCountriesView(discord.ui.View):
         self.groups = groups
         self.current_group_index = current_group_index
 
-        # Создаём Select для текущей группы
         options = [discord.SelectOption(label=country, emoji=flag) for country, flag in groups[current_group_index]]
         select = CountrySelect(continent, cog, options)
         self.add_item(select)
 
-        # Кнопки навигации
         if current_group_index > 0:
             self.add_item(PrevGroupButton(cog, continent, groups, current_group_index))
         if current_group_index < len(groups) - 1:
@@ -1329,13 +1303,10 @@ class CountrySelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         country_name = self.values[0]
-        # Проверяем, что страна существует и свободна в базе
         country = await async_fetch_one("SELECT id, name FROM countries WHERE name=? AND owner_id IS NULL", (country_name,))
         if not country:
             await interaction.response.send_message(f"❌ Страна **{country_name}** не найдена или уже занята.", ephemeral=True)
             return
-
-        # Открываем модальное окно для ввода имени правителя
         modal = RulerNameModal(country_name, self.cog, interaction.user, country['id'])
         await interaction.response.send_modal(modal)
 
@@ -1350,7 +1321,6 @@ class RulerNameModal(discord.ui.Modal, title="Введите имя правит
         self.country_id = country_id
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Выполняем регистрацию через метод кога
         await self.cog._register_country(interaction, self.country_name, self.ruler_name.value, self.country_id, self.user)
 
 # ========================
@@ -1360,14 +1330,11 @@ class Game(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # Метод регистрации страны (теперь корректный асинхронный метод класса)
     async def _register_country(self, interaction: discord.Interaction, country: str, ruler_name: str, country_id: int, user: discord.User):
-        # Уже проверено, что страна свободна
         await async_execute(
             "UPDATE countries SET owner_id=?, ruler_name=?, display_name=? WHERE id=?",
             (user.id, ruler_name, country, country_id)
         )
-        # Роли
         country_role_id = COUNTRY_ROLES.get(country)
         if country_role_id:
             role = interaction.guild.get_role(country_role_id)
@@ -1380,7 +1347,6 @@ class Game(commands.Cog):
                 try: await user.add_roles(role)
                 except: pass
 
-        # Сообщение в канал регистрации
         reg_channel_id = CHANNEL_IDS.get("registration")
         if reg_channel_id:
             reg_channel = self.bot.get_channel(reg_channel_id)
@@ -1395,8 +1361,6 @@ class Game(commands.Cog):
         await interaction.response.send_message(f"✅ Вы теперь управляете страной **{country}** как **{ruler_name}**! Используйте `/game`.", ephemeral=True)
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        """Обработчик ошибок для всех слеш-команд этого кога."""
-        # Если уже был ответ, пытаемся отредактировать или отправить followup
         if interaction.response.is_done():
             if isinstance(interaction.response, discord.InteractionResponse) and not interaction.is_expired():
                 try:
@@ -1405,17 +1369,7 @@ class Game(commands.Cog):
                     pass
         else:
             await interaction.response.send_message(f"❌ Произошла ошибка: {error}", ephemeral=True)
-        # Логируем в консоль
         print(f"Ошибка в команде {interaction.command.name if interaction.command else 'unknown'}: {error}")
-
-    async def country_autocomplete(self, interaction: discord.Interaction, current: str):
-        try:
-            rows = await async_fetch_all("SELECT name FROM countries WHERE owner_id IS NULL AND name LIKE ?", (f"{current}%",))
-            return [app_commands.Choice(name=row['name'], value=row['name']) for row in rows]
-        except Exception as e:
-            # В случае ошибки возвращаем пустой список – команда не упадёт
-            print(f"Ошибка автодополнения стран: {e}")
-            return []
 
     async def _get_country(self, user_id):
         try:
@@ -1438,7 +1392,6 @@ class Game(commands.Cog):
             await self._notify_user(country['owner_id'], message)
 
     async def _get_channel_or_create(self, guild, name):
-        """Найти канал по имени или создать, если нет."""
         channel = discord.utils.get(guild.text_channels, name=name)
         if not channel:
             channel = await guild.create_text_channel(name)
@@ -1447,13 +1400,10 @@ class Game(commands.Cog):
     # --- Основные команды ---
     @app_commands.command(name="reg", description="Зарегистрироваться как правитель свободной страны")
     async def reg(self, interaction: discord.Interaction):
-        # Проверяем, не управляет ли уже страной
         existing = await self._get_country(interaction.user.id)
         if existing:
             await interaction.response.send_message(f"Вы уже управляете страной: {existing['name']}. Сначала откажитесь от неё.", ephemeral=True)
             return
-
-        # Отправляем выбор континента
         view = ContinentSelectView(self)
         await interaction.response.send_message("🌍 Выберите континент:", view=view, ephemeral=True)
 
@@ -1463,7 +1413,6 @@ class Game(commands.Cog):
         if not row:
             await interaction.response.send_message("Вы не управляете ни одной страной.", ephemeral=True)
             return
-        # Снятие ролей
         country_role_id = COUNTRY_ROLES.get(row['name'])
         if country_role_id:
             role = interaction.guild.get_role(country_role_id)
@@ -1969,7 +1918,6 @@ class Game(commands.Cog):
         else:
             await async_execute("INSERT INTO mobilize_cooldowns (user_id, date, count) VALUES (?, ?, 1)", (interaction.user.id, today))
 
-        # Новость в канал "новости"
         news_channel_id = CHANNEL_IDS.get("news")
         country_name = country['display_name'] or country['name']
         ruler_name = country['ruler_name'] or "Неизвестный правитель"
@@ -2227,7 +2175,6 @@ class Game(commands.Cog):
         await interaction.response.send_message(f"Форма правления изменена на {form}.", ephemeral=True)
 
     async def _update_role(self, member: discord.Member, role_dict: dict, new_value: str):
-        """Убирает все роли из role_dict и выдаёт роль для new_value."""
         for role_name, role_id in role_dict.items():
             if role_id:
                 role = member.guild.get_role(role_id)
