@@ -11,7 +11,7 @@ class War(commands.Cog):
     async def declare_war(self, interaction: discord.Interaction, target: discord.Member):
         await interaction.response.send_message(f"Война объявлена стране {target.display_name}!", ephemeral=True)
 
-    # Заглушка для _declare_war (вызывается из game.py)
+    # Заглушки для вызовов из game.py
     async def _declare_war(self, interaction, attacker_id, defender_id, is_bot=False):
         await interaction.followup.send("Функция в разработке.", ephemeral=True)
 
