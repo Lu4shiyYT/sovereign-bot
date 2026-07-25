@@ -21,9 +21,9 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 # --- Загрузка когов ---
 async def load_cogs():
     modules = [
+        ("cogs.war", "War"),
         ("cogs.admin", "Admin"),
-        ("cogs.game", "Game"),
-        ("cogs.war", "War")
+        ("cogs.game", "Game")
     ]
     for path, name in modules:
         try:
