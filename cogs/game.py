@@ -814,21 +814,20 @@ class GameMenu(discord.ui.View):
 
     @discord.ui.button(label="⚔️ Война", style=discord.ButtonStyle.danger)
     async def war_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Пытаемся получить war_cog, если его нет – загружаем принудительно
-        war_cog = getattr(interaction.client, 'war_cog', None)
+        # Пытаемся получить war_cog
+        war_cog = interaction.client.get_cog("War")
         if war_cog is None:
-            # Пробуем загрузить ког прямо сейчас
+            # Ког не загружен – пробуем загрузить прямо сейчас
             try:
                 await interaction.client.load_extension("cogs.war")
                 war_cog = interaction.client.get_cog("War")
-                if war_cog:
-                    interaction.client.war_cog = war_cog
             except Exception as e:
-                await interaction.response.send_message(f"Не удалось загрузить ког войны: {e}", ephemeral=True)
+                await interaction.response.send_message(f"❌ Ошибка загрузки кога войны: {e}", ephemeral=True)
                 return
         if war_cog is None:
-            await interaction.response.send_message("Ког войны всё ещё не загружен.", ephemeral=True)
+            await interaction.response.send_message("❌ Ког войны не найден после загрузки.", ephemeral=True)
             return
+
         await interaction.response.edit_message(content="Военные действия", view=WarMenuView(self.country_id, war_cog))
 
     @discord.ui.button(label="🛡️ Армия", style=discord.ButtonStyle.primary)
