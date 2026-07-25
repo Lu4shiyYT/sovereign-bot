@@ -1370,7 +1370,10 @@ class Game(commands.Cog):
                 await reg_channel.send(f"{user.mention} теперь управляет страной **{country}** как правитель **{ruler_name}**.")
             except Exception as e:
                 print(f"Не удалось отправить в канал регистраций: {e}")
-
+        war_cog = self.bot.get_cog("War")
+        if war_cog:
+            await war_cog._notify_country_at_war(interaction, country_id)
+            
         await interaction.response.send_message(f"✅ Вы теперь управляете страной **{country}** как **{ruler_name}**! Используйте `/game`.", ephemeral=True)
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
