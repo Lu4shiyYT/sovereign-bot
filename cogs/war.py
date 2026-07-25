@@ -14,10 +14,9 @@ except ImportError:
     CHANNEL_IDS = {}
     BATTLE_ROUND_INTERVAL_MINUTES = 30
 
-# Импорт справочников техники и оружия
 from data.military import MILITARY_EQUIPMENT, WEAPONS
 
-# Новостные шаблоны (оставлены без изменений)
+# Новостные шаблоны
 WAR_START_NEWS = [
     "⚔️ Конфликт начался! {attacker} под руководством {attacker_ruler} объявил войну {defender}!",
     "💥 Внимание! {attacker} и {defender} вступают в войну. {attacker_ruler} заявил о начале боевых действий.",
@@ -56,8 +55,8 @@ class War(commands.Cog):
             if not attacker or not defender:
                 continue
 
-            # Определяем тип атаки из последнего хода (если есть)
-            attack_type = 'land'  # по умолчанию
+            # Определяем тип атаки из последнего хода (по умолчанию land)
+            attack_type = 'land'
             attacker_move = await async_fetch_one(
                 "SELECT * FROM war_moves WHERE war_id=? AND country_id=? ORDER BY created_at DESC LIMIT 1",
                 (war['id'], war['attacker_id'])
@@ -78,7 +77,7 @@ class War(commands.Cog):
             attacker_equip = await self._get_equipment_summary(attacker['id'], attack_type)
             defender_equip = await self._get_equipment_summary(defender['id'], attack_type)
 
-            # Расчет силы с бонусом от техники
+            # Расчёт силы с бонусом от техники
             def calc_power(country, equip_summary):
                 base = country['army_count'] * (country['combat_capability'] / 100)
                 if country['owner_id'] is None:
@@ -109,7 +108,7 @@ class War(commands.Cog):
             else:
                 await async_execute("INSERT INTO war_battles (war_id, last_battle_time) VALUES (?, ?)", (war['id'], now))
 
-            # Отчет о потерях
+            # Отчёт о потерях
             await self._send_battle_report(war, attacker, defender, atk_loss, def_loss, atk_equip_losses, def_equip_losses, attack_type)
 
             # Завершение войны, если армия кончилась
@@ -120,8 +119,7 @@ class War(commands.Cog):
                 await self._offer_post_war_terms(war, winner, loser)
 
     async def _get_equipment_summary(self, country_id: int, attack_type: str) -> dict:
-        """Возвращает словарь {тип_техники: количество} для заданного типа атаки."""
-        # Определяем категории техники, подходящие для attack_type
+        """Собирает количество техники, подходящей для типа атаки."""
         categories = []
         if attack_type == 'land':
             categories = ['сухопутные', 'беспилотные аппараты', 'разведка']
@@ -132,20 +130,12 @@ class War(commands.Cog):
         else:
             categories = ['сухопутные']
 
-        placeholders = ','.join(['?' for _ in categories])
-        rows = await async_fetch_all(
-            f"SELECT asset_name, quantity FROM military_assets WHERE country_id=? AND asset_type='equipment' AND asset_name IN "
-            f"(SELECT asset_name FROM military_assets WHERE country_id=? AND asset_type='equipment' AND asset_name IN ("
-            f"SELECT name FROM json_each(?)))", # упрощённый подход не сработает; сделаем проще:
-        )
-        # Из-за сложности запроса лучше получить всё и отфильтровать в коде.
         rows = await async_fetch_all(
             "SELECT asset_name, quantity FROM military_assets WHERE country_id=? AND asset_type='equipment'",
             (country_id,)
         )
         summary = {}
         for row in rows:
-            # проверяем, принадлежит ли asset_name одной из нужных категорий
             for cat in categories:
                 if row['asset_name'] in MILITARY_EQUIPMENT.get(cat, []):
                     summary[row['asset_name']] = summary.get(row['asset_name'], 0) + row['quantity']
@@ -153,7 +143,7 @@ class War(commands.Cog):
         return summary
 
     def _distribute_equipment_losses(self, equipment: dict, total_loss: int) -> dict:
-        """Возвращает словарь потерь {тип: количество} пропорционально количеству."""
+        """Распределяет потери по типам техники пропорционально их количеству."""
         if not equipment or total_loss <= 0:
             return {}
         total_qty = sum(equipment.values())
@@ -175,7 +165,7 @@ class War(commands.Cog):
             )
 
     async def _send_battle_report(self, war, attacker, defender, atk_loss, def_loss, atk_equip_losses, def_equip_losses, attack_type):
-        """Формирует и отправляет отчёт о бое."""
+        """Формирует и отправляет отчёт о боевых действиях."""
         attacker_name = attacker['display_name'] or attacker['name']
         defender_name = defender['display_name'] or defender['name']
         report = (
@@ -232,15 +222,13 @@ class War(commands.Cog):
             await interaction.response.send_message("Такой техники не существует.", ephemeral=True)
             return
 
-        # Стоимость (условно 1000 долларов за единицу)
-        cost = 1000 * quantity
+        cost = 1000 * quantity  # 1000 долларов за единицу
         money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
         if not money_row or money_row['amount'] < cost:
             await interaction.response.send_message("Недостаточно денег.", ephemeral=True)
             return
 
         await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (cost, country['id']))
-        # Добавляем технику
         existing = await async_fetch_one(
             "SELECT id, quantity FROM military_assets WHERE country_id=? AND asset_type='equipment' AND asset_name=?",
             (country['id'], equipment_name)
@@ -254,48 +242,154 @@ class War(commands.Cog):
             )
         await interaction.response.send_message(f"✅ Куплено {quantity} ед. {equipment_name} за {cost}$.", ephemeral=True)
 
-    # ---------- Вспомогательные методы ----------
-    async def _get_country(self, user_id):
-        return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
+    # ---------- ОБЪЯВЛЕНИЕ ВОЙНЫ (ИГРОК) ----------
+    @app_commands.command(name="declare_war", description="Объявить войну стране, управляемой игроком")
+    @app_commands.describe(target="Игрок, управляющий страной")
+    async def declare_war_player(self, interaction: discord.Interaction, target: discord.Member):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            if target.id == interaction.user.id:
+                await interaction.followup.send("Нельзя объявить войну самому себе!", ephemeral=True)
+                return
+            my_country = await self._get_country(interaction.user.id)
+            if not my_country:
+                await interaction.followup.send("Вы не управляете страной.", ephemeral=True)
+                return
+            target_country = await self._get_country(target.id)
+            if not target_country:
+                await interaction.followup.send("Этот игрок не управляет страной.", ephemeral=True)
+                return
+            await self._execute_war_declaration(interaction, my_country, target_country, is_bot=False, target_user=target)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
-    async def _notify_user(self, user_id, message):
-        user = self.bot.get_user(user_id)
-        if user:
-            try:
-                await user.send(message)
-            except discord.Forbidden:
-                pass
+    @app_commands.command(name="declare_war_bot", description="Объявить войну свободной стране (бот)")
+    @app_commands.autocomplete(country=country_autocomplete)
+    @app_commands.describe(country="Название свободной страны")
+    async def declare_war_bot(self, interaction: discord.Interaction, country: str):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            my_country = await self._get_country(interaction.user.id)
+            if not my_country:
+                await interaction.followup.send("Вы не управляете страной.", ephemeral=True)
+                return
+            target_country = await async_fetch_one("SELECT * FROM countries WHERE name=? AND owner_id IS NULL", (country,))
+            if not target_country:
+                await interaction.followup.send("Страна не найдена или уже занята.", ephemeral=True)
+                return
+            await self._execute_war_declaration(interaction, my_country, target_country, is_bot=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
-    def format_number(self, n, decimals=0):
-        if n is None:
-            return "0"
-        if decimals == 0:
-            return f"{int(n):,}".replace(",", ".")
+    async def _execute_war_declaration(self, interaction, attacker, defender, is_bot=False, target_user=None):
+        existing = await async_fetch_one(
+            "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
+            (attacker['id'], defender['id'], defender['id'], attacker['id'])
+        )
+        if existing:
+            await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
+            return
+
+        now = time.time()
+        await async_execute(
+            "INSERT INTO wars (attacker_id, defender_id, status, start_time) VALUES (?, ?, 'active', ?)",
+            (attacker['id'], defender['id'], now)
+        )
+
+        attacker_name = attacker['display_name'] or attacker['name']
+        defender_name = defender['display_name'] or defender['name']
+        attacker_ruler = attacker['ruler_name'] or "Неизвестный правитель"
+        defender_ruler = defender['ruler_name'] or "Неизвестный правитель"
+
+        game_date = await async_get_game_date()
+        date_str = game_date.strftime("%d.%m.%Y")
+        news_template = random.choice(WAR_START_NEWS)
+        news_msg = news_template.format(
+            attacker=attacker_name, attacker_ruler=attacker_ruler,
+            defender=defender_name, defender_ruler=defender_ruler
+        )
+
+        war_channel_id = CHANNEL_IDS.get("war_reports")
+        channel = None
+        if war_channel_id:
+            channel = self.bot.get_channel(war_channel_id)
         else:
-            return f"{n:,.{decimals}f}".replace(",", ".").replace(".", ",", 1)
+            channel = await self._get_channel_or_create(interaction.guild, "военные-сводки")
+        if channel:
+            full_msg = (
+                f"# ⚔️ Объявление войны\n\n"
+                f"{news_msg}\n\n"
+                f"**Дата:** {date_str}\n"
+                f"**Силы сторон:** {attacker_name} ({attacker['combat_capability']}) vs {defender_name} ({defender['combat_capability']})\n"
+                f"**Численность:** {attacker_name} ({self.format_number(attacker['army_count'])}) vs {defender_name} ({self.format_number(defender['army_count'])})"
+            )
+            await channel.send(full_msg)
 
-    # Внутренние методы для View из game.py
+        if not is_bot and defender['owner_id']:
+            user = self.bot.get_user(defender['owner_id'])
+            if user:
+                try:
+                    await user.send(f"{interaction.user.mention} объявил вам войну от страны **{attacker_name}**!")
+                except discord.Forbidden:
+                    pass
+
+        await interaction.followup.send(f"Война объявлена стране {defender_name}.", ephemeral=True)
+
+    # ---------- МИРНЫЙ ДОГОВОР ----------
+    @app_commands.command(name="peace_treaty", description="Предложить мир противнику")
+    async def peace_treaty(self, interaction: discord.Interaction, target: discord.Member):
+        if target.id == interaction.user.id:
+            await interaction.response.send_message("Нельзя заключить мир с самим собой.", ephemeral=True)
+            return
+        my_country = await self._get_country(interaction.user.id)
+        if not my_country:
+            await interaction.response.send_message("Вы не управляете страной.", ephemeral=True)
+            return
+        target_country = await self._get_country(target.id)
+        if not target_country:
+            await interaction.response.send_message("Этот игрок не управляет страной.", ephemeral=True)
+            return
+        war = await async_fetch_one(
+            "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
+            (my_country['id'], target_country['id'], target_country['id'], my_country['id'])
+        )
+        if not war:
+            await interaction.response.send_message("Вы не находитесь в состоянии войны с этой страной.", ephemeral=True)
+            return
+        await async_execute("UPDATE wars SET status='ended' WHERE id=?", (war['id'],))
+
+        game_date = await async_get_game_date()
+        date_str = game_date.strftime("%d.%m.%Y")
+        peace_template = random.choice(WAR_PEACE_NEWS)
+        peace_msg = peace_template.format(country1=my_country['name'], country2=target_country['name'])
+
+        war_channel_id = CHANNEL_IDS.get("war_reports")
+        if war_channel_id:
+            channel = self.bot.get_channel(war_channel_id)
+        else:
+            channel = await self._get_channel_or_create(interaction.guild, "военные-сводки")
+        if channel:
+            full_msg = f"# 🕊️ Мирный договор\n\n{peace_msg}\n\n**Дата:** {date_str}"
+            await channel.send(full_msg)
+
+        try:
+            await target.send(f"{interaction.user.mention} предложил мир от страны **{my_country['name']}**. Война окончена.")
+        except discord.Forbidden:
+            pass
+        await interaction.response.send_message(f"Мир заключён с {target_country['name']}.", ephemeral=True)
+
+    # ---------- ВНУТРЕННИЕ МЕТОДЫ ДЛЯ VIEW (ИЗ GAME.PY) ----------
     async def _declare_war(self, interaction: discord.Interaction, attacker_id: int, defender_id: int, is_bot: bool = False):
-        """Вызывается из WarMenuView."""
         await interaction.response.defer(ephemeral=True)
         attacker = await async_fetch_one("SELECT * FROM countries WHERE id=?", (attacker_id,))
         defender = await async_fetch_one("SELECT * FROM countries WHERE id=?", (defender_id,))
         if not attacker or not defender:
             await interaction.followup.send("Страна не найдена.", ephemeral=True)
             return
-        # Проверка на существующую войну
-        existing = await async_fetch_one(
-            "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
-            (attacker_id, defender_id, defender_id, attacker_id)
-        )
-        if existing:
-            await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
-            return
         await self._execute_war_declaration(interaction, attacker, defender, is_bot=is_bot,
                                             target_user=None if is_bot else await self.bot.fetch_user(defender['owner_id']) if defender['owner_id'] else None)
 
     async def _make_peace(self, interaction: discord.Interaction, war_id: int):
-        """Заключение мира по ID войны (из View)."""
         await interaction.response.defer(ephemeral=True)
         war = await async_fetch_one("SELECT * FROM wars WHERE id=? AND status='active'", (war_id,))
         if not war:
@@ -323,7 +417,6 @@ class War(commands.Cog):
             full_msg = f"# 🕊️ Мирный договор\n\n{peace_msg}\n\n**Дата:** {date_str}"
             await channel.send(full_msg)
 
-        # Уведомление противнику
         enemy_id = war['attacker_id'] if war['defender_id'] == my_country['id'] else war['defender_id']
         enemy = await async_fetch_one("SELECT owner_id, name FROM countries WHERE id=?", (enemy_id,))
         if enemy and enemy['owner_id']:
@@ -335,10 +428,11 @@ class War(commands.Cog):
                     pass
         await interaction.followup.send("Мир заключён.", ephemeral=True)
 
-    # --- Пошаговые ходы ---
+    # ---------- ПОШАГОВЫЙ ХОД ----------
     @app_commands.command(name="war_action", description="Совершить ход в войне (раз в 30 минут)")
     @app_commands.describe(
         action="Тип действия",
+        attack_type="Тип атаки (land/air/naval)",
         target_army_percent="Процент армии (1-100)"
     )
     @app_commands.choices(action=[
@@ -347,7 +441,12 @@ class War(commands.Cog):
         app_commands.Choice(name="Разведка", value="scout"),
         app_commands.Choice(name="Смена тактики", value="tactics")
     ])
-    async def war_action(self, interaction: discord.Interaction, action: str, target_army_percent: int = 100):
+    @app_commands.choices(attack_type=[
+        app_commands.Choice(name="Наземная", value="land"),
+        app_commands.Choice(name="Воздушная", value="air"),
+        app_commands.Choice(name="Морская", value="naval")
+    ])
+    async def war_action(self, interaction: discord.Interaction, action: str, attack_type: str = 'land', target_army_percent: int = 100):
         await interaction.response.defer(ephemeral=True)
         try:
             my_country = await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (interaction.user.id,))
@@ -363,7 +462,6 @@ class War(commands.Cog):
                 await interaction.followup.send("Вы не находитесь в состоянии войны.", ephemeral=True)
                 return
 
-            # Кулдаун по МСК
             moscow_tz = ZoneInfo("Europe/Moscow")
             now = datetime.datetime.now(moscow_tz)
             if now.minute < 30:
@@ -380,18 +478,61 @@ class War(commands.Cog):
                 await interaction.followup.send("Вы уже отдали приказ в этом получасовом интервале.", ephemeral=True)
                 return
 
+            details = json.dumps({"action": action, "attack_type": attack_type, "army_percent": target_army_percent})
             await async_execute(
                 "INSERT INTO war_moves (war_id, country_id, move_type, details, created_at) VALUES (?, ?, ?, ?, ?)",
-                (war['id'], my_country['id'], action, f"army_percent={target_army_percent}", now.timestamp())
+                (war['id'], my_country['id'], action, details, now.timestamp())
             )
 
             action_names = {"attack": "Атака", "defend": "Оборона", "scout": "Разведка", "tactics": "Смена тактики"}
             await interaction.followup.send(
-                f"✅ Приказ **{action_names[action]}** принят (использовано {target_army_percent}% армии).",
+                f"✅ Приказ **{action_names[action]}** ({attack_type}) принят (использовано {target_army_percent}% армии).",
                 ephemeral=True
             )
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+    # ---------- ПОСЛЕВОЕННЫЕ УСЛОВИЯ ----------
+    async def _offer_post_war_terms(self, war, winner, loser):
+        if winner['owner_id'] is None:
+            return
+        user = self.bot.get_user(winner['owner_id'])
+        if not user:
+            return
+        view = PostWarView(war['id'], winner['id'], loser['id'])
+        try:
+            await user.send(
+                f"🎉 Война против **{loser['name']}** окончена вашей победой! Выберите условия:",
+                view=view
+            )
+        except discord.Forbidden:
+            pass
+
+    # ---------- ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ----------
+    async def _get_country(self, user_id):
+        return await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (user_id,))
+
+    async def _notify_user(self, user_id, message):
+        user = self.bot.get_user(user_id)
+        if user:
+            try:
+                await user.send(message)
+            except discord.Forbidden:
+                pass
+
+    async def _get_channel_or_create(self, guild, name):
+        channel = discord.utils.get(guild.text_channels, name=name)
+        if not channel:
+            channel = await guild.create_text_channel(name)
+        return channel
+
+    def format_number(self, n, decimals=0):
+        if n is None:
+            return "0"
+        if decimals == 0:
+            return f"{int(n):,}".replace(",", ".")
+        else:
+            return f"{n:,.{decimals}f}".replace(",", ".").replace(".", ",", 1)
 
     async def country_autocomplete(self, interaction: discord.Interaction, current: str):
         try:
@@ -405,10 +546,10 @@ class War(commands.Cog):
             return []
 
 
-# --- Послевоенное меню ---
+# ---------- VIEW ДЛЯ ПОСЛЕВОЕННЫХ УСЛОВИЙ ----------
 class PostWarView(discord.ui.View):
     def __init__(self, war_id, winner_id, loser_id):
-        super().__init__(timeout=86400)  # 24 часа
+        super().__init__(timeout=86400)
         self.war_id = war_id
         self.winner_id = winner_id
         self.loser_id = loser_id
