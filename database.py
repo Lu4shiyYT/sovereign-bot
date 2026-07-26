@@ -272,7 +272,7 @@ def init_db():
         )
     """)
 
-        cur.execute("""
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS officers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             country_id INTEGER NOT NULL,
