@@ -8,8 +8,6 @@ import datetime
 import asyncio
 from zoneinfo import ZoneInfo
 import json
-import io
-from PIL import Image, ImageDraw, ImageFont  # для карты
 
 try:
     from config import CHANNEL_IDS, BATTLE_ROUND_INTERVAL_MINUTES
@@ -138,11 +136,6 @@ class War(commands.Cog):
                 await self._offer_post_war_terms(war, winner, loser)
 
     # ================= КАРТА =================
-    async def generate_map_image(self, war_id):
-        """Генерирует изображение карты с текущей линией фронта."""
-        # Пока заглушка, в будущем будет использоваться Pillow
-        return None
-
     async def _get_frontline_province(self, war_id):
         row = await async_fetch_one(
             "SELECT p.* FROM frontlines f JOIN provinces p ON f.province_id = p.id WHERE f.war_id = ? LIMIT 1",
