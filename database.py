@@ -106,6 +106,7 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # Игровая дата
     cur.execute("""
         CREATE TABLE IF NOT EXISTS game_date (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -121,14 +122,22 @@ def init_db():
             FOREIGN KEY (war_id) REFERENCES wars(id)
         )
     """)
+
+    # Провинции – полностью новая структура
     cur.execute("""
         CREATE TABLE IF NOT EXISTS provinces (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             country_id INTEGER,
+            terrain_type TEXT DEFAULT 'plain',   -- plain, forest, mountain, desert, urban, swamp, coast
+            climate_severity INTEGER DEFAULT 1,  -- 1 (мягкий) до 10 (экстремальный)
+            economic_value REAL DEFAULT 1.0,     -- множитель дохода от провинции
+            fortification_level INTEGER DEFAULT 0,
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
+
+    # Остальные таблицы без изменений
     cur.execute("""
         CREATE TABLE IF NOT EXISTS buildings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -251,6 +260,18 @@ def init_db():
             FOREIGN KEY (war_id) REFERENCES wars(id)
         )
     """)
+    # Таблица для контроля линии фронта
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS frontlines (
+            war_id INTEGER NOT NULL,
+            province_id INTEGER NOT NULL,
+            controlled_by_id INTEGER NOT NULL,
+            last_change REAL,
+            FOREIGN KEY (war_id) REFERENCES wars(id),
+            FOREIGN KEY (province_id) REFERENCES provinces(id)
+        )
+    """)
+
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_attacker ON wars(attacker_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_defender ON wars(defender_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_pacts_from ON pacts(from_country)")
