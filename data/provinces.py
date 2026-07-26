@@ -1,45 +1,64 @@
 # data/provinces.py
-# Структура данных для провинций стран
-# Каждый регион: (название, тип местности, суровость климата 1-10, экономическая ценность)
+# Все провинции стран с типами местности, климатом, экономической ценностью и природными ресурсами
 
-PROVINCES = {
+PROVINCES_DATA = {
     "Сомали": [
-        ("Могадишо", "urban", 7, 1.5),
-        ("Харгейса", "desert", 8, 0.8),
-        ("Кисмайо", "coast", 6, 1.2),
-        ("Байдабо", "plain", 7, 0.9)
+        {"name": "Могадишо", "terrain": "urban", "climate_severity": 7, "economic_value": 1.5,
+         "resources": {"Нефть": 500, "Пресная вода": 200}},
+        {"name": "Харгейса", "terrain": "desert", "climate_severity": 8, "economic_value": 0.8,
+         "resources": {"Уголь": 1000}},
+        {"name": "Кисмайо", "terrain": "coast", "climate_severity": 6, "economic_value": 1.2,
+         "resources": {"Рыба": 300, "Нефть": 400}},
+        {"name": "Байдабо", "terrain": "plain", "climate_severity": 7, "economic_value": 0.9,
+         "resources": {"Продовольствие": 600}}
     ],
     "Афганистан": [
-        ("Кабул", "urban", 7, 1.3),
-        ("Кандагар", "desert", 8, 0.9),
-        ("Герат", "desert", 7, 1.0),
-        ("Мазари-Шариф", "mountain", 6, 0.8)
+        {"name": "Кабул", "terrain": "urban", "climate_severity": 7, "economic_value": 1.3,
+         "resources": {"Природный газ": 2000}},
+        {"name": "Кандагар", "terrain": "desert", "climate_severity": 8, "economic_value": 0.9,
+         "resources": {"Железная руда": 1500}},
+        {"name": "Герат", "terrain": "desert", "climate_severity": 7, "economic_value": 1.0,
+         "resources": {"Уголь": 800}},
+        {"name": "Мазари-Шариф", "terrain": "mountain", "climate_severity": 6, "economic_value": 0.8,
+         "resources": {"Железная руда": 2000, "Уголь": 1200}}
     ],
     "Чад": [
-        ("Нджамена", "urban", 7, 1.2),
-        ("Мунду", "plain", 5, 0.9),
-        ("Сарх", "plain", 5, 0.8)
+        {"name": "Нджамена", "terrain": "urban", "climate_severity": 7, "economic_value": 1.2,
+         "resources": {"Нефть": 3000}},
+        {"name": "Мунду", "terrain": "plain", "climate_severity": 5, "economic_value": 0.9,
+         "resources": {"Продовольствие": 800}},
+        {"name": "Сарх", "terrain": "plain", "climate_severity": 5, "economic_value": 0.8,
+         "resources": {"Хлопок": 500}}
     ],
     "Нигер": [
-        ("Ниамей", "urban", 6, 1.1),
-        ("Зиндер", "desert", 7, 0.7),
-        ("Маради", "plain", 6, 0.9)
+        {"name": "Ниамей", "terrain": "urban", "climate_severity": 6, "economic_value": 1.1,
+         "resources": {"Уран": 1000}},
+        {"name": "Зиндер", "terrain": "desert", "climate_severity": 7, "economic_value": 0.7,
+         "resources": {"Железная руда": 900}},
+        {"name": "Маради", "terrain": "plain", "climate_severity": 6, "economic_value": 0.9,
+         "resources": {"Продовольствие": 700}}
     ],
     "ЦАР": [
-        ("Банги", "urban", 4, 1.0),
-        ("Берберати", "forest", 3, 0.8),
-        ("Бриа", "forest", 3, 0.7)
+        {"name": "Банги", "terrain": "urban", "climate_severity": 4, "economic_value": 1.0,
+         "resources": {"Древесина": 2000, "Алмазы": 500}},
+        {"name": "Берберати", "terrain": "forest", "climate_severity": 3, "economic_value": 0.8,
+         "resources": {"Древесина": 3000}},
+        {"name": "Бриа", "terrain": "forest", "climate_severity": 3, "economic_value": 0.7,
+         "resources": {"Золото": 200}}
     ],
     "Нигерия": [
-        ("Абуджа", "urban", 4, 1.8),
-        ("Лагос", "urban", 3, 2.0),
-        ("Кано", "plain", 5, 1.4),
-        ("Порт-Харкорт", "coast", 4, 1.5)
+        {"name": "Абуджа", "terrain": "urban", "climate_severity": 4, "economic_value": 1.8,
+         "resources": {"Нефть": 5000, "Природный газ": 3000}},
+        {"name": "Лагос", "terrain": "urban", "climate_severity": 3, "economic_value": 2.0,
+         "resources": {"Нефть": 4000}},
+        {"name": "Кано", "terrain": "plain", "climate_severity": 5, "economic_value": 1.4,
+         "resources": {"Продовольствие": 1500, "Хлопок": 1000}},
+        {"name": "Порт-Харкорт", "terrain": "coast", "climate_severity": 4, "economic_value": 1.5,
+         "resources": {"Нефть": 6000}}
     ]
-    # Остальные страны добавятся позже
 }
 
-# Типы местности и их боевые модификаторы
+# Модификаторы ландшафта для боя
 TERRAIN_MODIFIERS = {
     "plain":    {"attack": 1.0, "defense": 1.0, "movement_cost": 1},
     "forest":   {"attack": 0.8, "defense": 1.3, "movement_cost": 2},
