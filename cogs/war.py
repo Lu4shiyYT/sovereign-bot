@@ -87,12 +87,19 @@ class War(commands.Cog):
             atk_equip = await self._get_equipment_power(attacker['id'])
             def_equip = await self._get_equipment_power(defender['id'])
 
+            # Офицеры
+            atk_officer = await self._get_officer_bonus(attacker['id'])
+            def_officer = await self._get_officer_bonus(defender['id'])
+
+            # Погода в текущей провинции
+            weather_mod = await self._get_weather_modifier(frontline_province['id'])
+
             def calc_power(country, equip_bonus, is_attacker=True):
                 base = country['army_count'] * (country['combat_capability'] / 100)
                 if country['owner_id'] is None:
                     base *= (country.get('bot_strength', 5) / 10)
                 terrain_mult = terrain["attack"] if is_attacker else terrain["defense"]
-                return base * (1 + equip_bonus / 100) * terrain_mult
+                return base * (1 + equip_bonus / 100) * terrain_mult * weather_mod * (atk_officer if is_attacker else def_officer)
 
             atk_power = calc_power(attacker, atk_equip, is_attacker=True) * tactic_data["attack_mod"]
             def_power = calc_power(defender, def_equip, is_attacker=False) * tactic_data["defense_mod"]
@@ -121,6 +128,9 @@ class War(commands.Cog):
             await async_execute("INSERT INTO war_reports (war_id, report_text, created_at) VALUES (?, ?, ?)",
                                 (war['id'], report_text, time.time()))
 
+            # Партизанская активность
+            await self._check_partisan_activity(war['id'])
+            
             if attacker['army_count'] <= 0 or defender['army_count'] <= 0:
                 winner = attacker if attacker['army_count'] > 0 else defender
                 loser = defender if winner == attacker else attacker
@@ -182,7 +192,84 @@ class War(commands.Cog):
                         break
         return total
 
-        # ================= РАЗВЕДКА =================
+        # ================= ПРОИЗВОДСТВО И СНАБЖЕНИЕ =================
+    async def _produce_equipment(self, country_id, equipment_name, quantity):
+        """Производит технику/оружие на заводах, тратя ресурсы."""
+        # Ищем предмет в справочнике
+        item_data = None
+        for cat, items in {**MILITARY_EQUIPMENT, **WEAPONS}.items():
+            for item in items:
+                if item['name'] == equipment_name:
+                    item_data = item
+                    break
+            if item_data: break
+        if not item_data:
+            return False, "Предмет не найден."
+
+        # Проверка ресурсов (заглушка — нужны деньги и металл)
+        money = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country_id,))
+        if not money or money['amount'] < item_data['cost'] * quantity:
+            return False, "Недостаточно долларов."
+
+        # Тратим деньги
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'",
+                            (item_data['cost'] * quantity, country_id))
+
+        # Добавляем технику/оружие
+        existing = await async_fetch_one(
+            "SELECT id, quantity FROM military_assets WHERE country_id=? AND asset_name=? AND asset_type='equipment'",
+            (country_id, equipment_name))
+        if existing:
+            await async_execute("UPDATE military_assets SET quantity = quantity + ? WHERE id=?",
+                                (quantity, existing['id']))
+        else:
+            await async_execute(
+                "INSERT INTO military_assets (country_id, asset_type, asset_name, quantity) VALUES (?, 'equipment', ?, ?)",
+                (country_id, equipment_name, quantity))
+        return True, f"Произведено {quantity} ед. {equipment_name}."
+
+    async def _consume_supplies(self, country_id, army_percent, action_type):
+        """Расходует топливо и боеприпасы пропорционально армии."""
+        country = await async_fetch_one("SELECT * FROM countries WHERE id=?", (country_id,))
+        army_count = country['army_count']
+        used_army = int(army_count * army_percent / 100)
+        # Пока просто заглушка: тратим условные единицы "Припасы"
+        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'",
+                            (int(used_army * 0.01), country_id))
+
+    # ================= ОФИЦЕРСКИЙ КОРПУС =================
+    async def _get_officer_bonus(self, country_id):
+        officers = await async_fetch_all("SELECT * FROM officers WHERE country_id=?", (country_id,))
+        if not officers:
+            return 1.0  # без бонуса
+        # Средний навык атаки
+        avg_attack = sum(o['attack_skill'] for o in officers) / len(officers)
+        return 1.0 + (avg_attack * 0.1)  # до +10%
+
+    # ================= ПОГОДА =================
+    async def _get_weather_modifier(self, province_id):
+        """Возвращает множитель погоды (0.8 - 1.2) для данного региона."""
+        row = await async_fetch_one("SELECT * FROM weather_log WHERE province_id=? ORDER BY id DESC LIMIT 1",
+                                    (province_id,))
+        if not row:
+            return 1.0
+        # Упрощённо: температура и осадки влияют на атаку
+        temp_mod = 1.0 + (row['temperature'] - 20) * 0.005
+        precip_mod = 1.0 - row['precipitation'] * 0.01
+        return max(0.8, min(1.2, temp_mod * precip_mod))
+
+    async def _update_weather(self):
+        """Каждые 4 игровых месяца (8 реальных часов) обновляет погоду во всех провинциях."""
+        provinces = await async_fetch_all("SELECT id FROM provinces")
+        for p in provinces:
+            season = random.choice(['summer', 'autumn', 'winter', 'spring'])
+            temp = random.uniform(-10, 40) if season == 'winter' else random.uniform(10, 45)
+            precip = random.uniform(0, 50)
+            await async_execute(
+                "INSERT INTO weather_log (province_id, season, temperature, precipitation) VALUES (?, ?, ?, ?)",
+                (p['id'], season, temp, precip))
+    
+    # ================= РАЗВЕДКА =================
     async def _handle_scout(self, my_country, enemy, war, interaction):
         recon_power = my_country['info_security'] + random.randint(-10, 10)
         counter_power = enemy['counter_intelligence'] + random.randint(-5, 5)
@@ -211,6 +298,54 @@ class War(commands.Cog):
                 await news_channel.send(REPORT_TEMPLATES["scout_fail"].format(
                     country=my_country['display_name'] or my_country['name']
                 ))
+
+        # ================= СПЕЦОПЕРАЦИИ =================
+    async def _execute_specops(self, my_country, enemy, war, interaction):
+        """Проводит диверсию против врага."""
+        # Вероятность успеха зависит от разведки и опыта офицеров
+        base_chance = 0.4
+        if random.random() < base_chance:
+            # Уничтожаем случайную технику или убиваем офицера
+            target = random.choice(["technique", "officer"])
+            if target == "technique":
+                assets = await async_fetch_all(
+                    "SELECT asset_name, quantity FROM military_assets WHERE country_id=? AND quantity > 0",
+                    (enemy['id'],))
+                if assets:
+                    victim = random.choice(assets)
+                    loss = min(victim['quantity'], random.randint(1, 3))
+                    await async_execute("UPDATE military_assets SET quantity = quantity - ? WHERE country_id=? AND asset_name=?",
+                                        (loss, enemy['id'], victim['asset_name']))
+                    await interaction.followup.send(f"💥 Спецоперация успешна! Уничтожено {loss} ед. {victim['asset_name']} врага.", ephemeral=True)
+                else:
+                    await interaction.followup.send("⚠️ У врага нет техники для диверсии.", ephemeral=True)
+            else:
+                officers = await async_fetch_all("SELECT id, name FROM officers WHERE country_id=?", (enemy['id'],))
+                if officers:
+                    victim = random.choice(officers)
+                    await async_execute("DELETE FROM officers WHERE id=?", (victim['id'],))
+                    await interaction.followup.send(f"🗡️ Ликвидирован офицер {victim['name']} врага!", ephemeral=True)
+                else:
+                    await interaction.followup.send("⚠️ У врага нет офицеров.", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Спецоперация провалилась.", ephemeral=True)
+
+    # ================= ПАРТИЗАНСКАЯ ВОЙНА =================
+    async def _check_partisan_activity(self, country_id):
+        """При оккупации провинций возможны восстания."""
+        occupied = await async_fetch_all(
+            "SELECT p.id, p.name FROM provinces p JOIN frontlines f ON p.id = f.province_id "
+            "WHERE f.controlled_by_id != p.country_id AND f.war_id IN (SELECT id FROM wars WHERE status='active')"
+        )
+        for prov in occupied:
+            if random.random() < 0.1:  # 10% шанс восстания
+                # Уменьшаем армию оккупанта
+                await async_execute(
+                    "UPDATE countries SET army_count = army_count - ? WHERE id = (SELECT country_id FROM provinces WHERE id = ?)",
+                    (random.randint(10, 100), prov['id']))
+                news_channel = self.bot.get_channel(CHANNEL_IDS.get("news", 0))
+                if news_channel:
+                    await news_channel.send(f"🔥 В {prov['name']} вспыхнуло партизанское восстание против оккупантов!")
 
     async def _get_equipment_summary(self, country_id):
         assets = await async_fetch_all(
