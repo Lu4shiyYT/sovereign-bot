@@ -272,6 +272,39 @@ def init_db():
         )
     """)
 
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS officers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            country_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            rank TEXT DEFAULT 'Лейтенант',
+            attack_skill REAL DEFAULT 0.5,
+            defense_skill REAL DEFAULT 0.5,
+            logistic_skill REAL DEFAULT 0.5,
+            experience REAL DEFAULT 0,
+            FOREIGN KEY (country_id) REFERENCES countries(id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS weather_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            province_id INTEGER NOT NULL,
+            season TEXT DEFAULT 'summer',
+            temperature REAL DEFAULT 20.0,
+            precipitation REAL DEFAULT 0,
+            FOREIGN KEY (province_id) REFERENCES provinces(id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS supply_stocks (
+            country_id INTEGER NOT NULL,
+            resource_name TEXT NOT NULL,
+            amount REAL DEFAULT 0,
+            PRIMARY KEY (country_id, resource_name),
+            FOREIGN KEY (country_id) REFERENCES countries(id)
+        )
+    """)
+
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_attacker ON wars(attacker_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_defender ON wars(defender_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_pacts_from ON pacts(from_country)")
