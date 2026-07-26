@@ -468,7 +468,6 @@ class War(commands.Cog):
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
     async def _execute_war_declaration(self, interaction, attacker, defender, is_bot=False, target_user=None):
-        """Общая логика объявления войны."""
         existing = await async_fetch_one(
             "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
             (attacker['id'], defender['id'], defender['id'], attacker['id'])
@@ -485,23 +484,43 @@ class War(commands.Cog):
 
         attacker_name = attacker['display_name'] or attacker['name']
         defender_name = defender['display_name'] or defender['name']
-        hashtag = f"#{attacker['name'].upper().replace(' ', '')}-{defender['name'].upper().replace(' ', '')}"
+        attacker_ruler = attacker['ruler_name'] or "Неизвестный правитель"
+        defender_ruler = defender['ruler_name'] or "Неизвестный правитель"
 
-        news_template = random.choice(REPORT_TEMPLATES["war_start"])
+        # Старые шаблоны (5 вариантов)
+        WAR_START_NEWS = [
+            "⚔️ Конфликт начался! {attacker} под руководством {attacker_ruler} объявил войну {defender}!",
+            "💥 Внимание! {attacker} и {defender} вступают в войну. {attacker_ruler} заявил о начале боевых действий.",
+            "🚀 Военная тревога! {attacker} атакует {defender}. {attacker_ruler} отдал приказ о наступлении.",
+            "🌍 Мир раскололся: {attacker} объявил войну {defender}. Правитель {attacker_ruler} выступил с обращением.",
+            "🔥 Пламя войны: {attacker} начинает вторжение в {defender}. {attacker_ruler} взял на себя ответственность."
+        ]
+        news_template = random.choice(WAR_START_NEWS)
         news_msg = news_template.format(
-            attacker=attacker_name, attacker_ruler=attacker['ruler_name'] or "Неизвестный правитель",
-            defender=defender_name, defender_ruler=defender['ruler_name'] or "Неизвестный правитель",
-            hashtag=hashtag
+            attacker=attacker_name, attacker_ruler=attacker_ruler,
+            defender=defender_name, defender_ruler=defender_ruler
         )
 
-        # Отправка в военный канал
+        game_date = await async_get_game_date()
+        date_str = game_date.strftime("%d.%m.%Y")
+        hashtag = f"#{attacker['name'].upper().replace(' ', '')}-{defender['name'].upper().replace(' ', '')}"
+
         war_channel_id = CHANNEL_IDS.get("war_reports")
+        channel = None
         if war_channel_id:
             channel = self.bot.get_channel(war_channel_id)
         else:
             channel = await self._get_channel_or_create(interaction.guild, "военные-сводки")
         if channel:
-            await channel.send(news_msg)
+            full_msg = (
+                f"# ⚔️ Объявление войны\n\n"
+                f"{news_msg}\n\n"
+                f"**Дата:** {date_str}\n"
+                f"**Силы сторон:** {attacker_name} ({attacker['combat_capability']}) vs {defender_name} ({defender['combat_capability']})\n"
+                f"**Численность:** {attacker_name} ({self.format_number(attacker['army_count'])}) vs {defender_name} ({self.format_number(defender['army_count'])})\n"
+                f"#{hashtag}"
+            )
+            await channel.send(full_msg)
 
         # Уведомление игроку-защитнику
         if not is_bot and defender['owner_id']:
@@ -512,7 +531,7 @@ class War(commands.Cog):
                 except discord.Forbidden:
                     pass
 
-        await interaction.followup.send(f"✅ Война объявлена стране {defender_name}.", ephemeral=True)
+        await interaction.followup.send(f"Война объявлена стране {defender_name}.", ephemeral=True)
 
     # ================= МИРНЫЕ ПЕРЕГОВОРЫ =================
     @app_commands.command(name="peace_treaty", description="Предложить мир противнику")
