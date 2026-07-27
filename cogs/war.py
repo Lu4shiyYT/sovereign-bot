@@ -490,8 +490,7 @@ class War(commands.Cog):
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
     # ================= ОБЪЯВЛЕНИЕ ВОЙНЫ =================
-    async def _execute_war_declaration(self, interaction, attacker, defender, reason, description, is_bot=False):
-        """Общая логика объявления войны. Вызывается из View."""
+    async def _execute_war_declaration(self, interaction, attacker, defender, reason, description, is_bot=False, target_user=None):
         existing = await async_fetch_one(
             "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
             (attacker['id'], defender['id'], defender['id'], attacker['id'])
@@ -636,7 +635,6 @@ class War(commands.Cog):
 
     # ================= МЕТОДЫ ДЛЯ VIEW (ИЗ GAME.PY) =================
     async def _declare_war(self, interaction: discord.Interaction, attacker_id: int, defender_id: int, reason: str, description: str, is_bot: bool = False):
-        await interaction.response.defer(ephemeral=True)
         try:
             attacker = await async_fetch_one("SELECT * FROM countries WHERE id=?", (attacker_id,))
             defender = await async_fetch_one("SELECT * FROM countries WHERE id=?", (defender_id,))
@@ -650,12 +648,31 @@ class War(commands.Cog):
             if existing:
                 await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
                 return
-            await self._execute_war_declaration(interaction, attacker, defender, reason, description, is_bot=is_bot)
+            await self._execute_war_declaration(interaction, attacker, defender, reason, description, is_bot=is_bot,
+                                                target_user=None if is_bot else (await self.bot.fetch_user(defender['owner_id']) if defender['owner_id'] else None))
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+    async def _declare_war_from_modal(self, interaction: discord.Interaction, attacker_id: int, defender_id: int, reason: str, description: str, is_bot: bool = False):
+        try:
+            attacker = await async_fetch_one("SELECT * FROM countries WHERE id=?", (attacker_id,))
+            defender = await async_fetch_one("SELECT * FROM countries WHERE id=?", (defender_id,))
+            if not attacker or not defender:
+                await interaction.followup.send("Страна не найдена.", ephemeral=True)
+                return
+            existing = await async_fetch_one(
+                "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
+                (attacker_id, defender_id, defender_id, attacker_id)
+            )
+            if existing:
+                await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
+                return
+            await self._execute_war_declaration(interaction, attacker, defender, reason, description, is_bot=is_bot,
+                                                target_user=None if is_bot else (await self.bot.fetch_user(defender['owner_id']) if defender['owner_id'] else None))
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
     async def _make_peace(self, interaction: discord.Interaction, war_id: int):
-        await interaction.response.defer(ephemeral=True)
         try:
             war = await async_fetch_one("SELECT * FROM wars WHERE id=? AND status='active'", (war_id,))
             if not war:
