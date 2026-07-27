@@ -312,6 +312,15 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS supply_stocks (
+            country_id INTEGER NOT NULL,
+            resource_name TEXT NOT NULL,
+            amount REAL DEFAULT 0,
+            PRIMARY KEY (country_id, resource_name),
+            FOREIGN KEY (country_id) REFERENCES countries(id)
+        )
+    """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_attacker ON wars(attacker_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_wars_defender ON wars(defender_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_pacts_from ON pacts(from_country)")
@@ -319,5 +328,8 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sanctions_to ON sanctions(to_country)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_alliance_members_country ON alliance_members(country_id)")
 
+    # Удаляем доллары из ресурсов, если они там были (валюта теперь в countries.budget)
+    cur.execute("DELETE FROM resources WHERE resource_name='Доллары'")
+    
     conn.commit()
     conn.close()
