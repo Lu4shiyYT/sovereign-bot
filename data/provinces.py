@@ -2,16 +2,16 @@
 
 PROVINCES_DATA = {
     "Сомали": [
-        {"name": "Могадишо", "terrain": "urban", "climate_severity": 7, "economic_value": 1.5, "resources": {"Нефть": 200_000_000, "Пресная вода": 20_000_000_000, "Рыба": 500_000}},
-        {"name": "Харгейса", "terrain": "desert", "climate_severity": 8, "economic_value": 0.8, "resources": {"Уголь": 50_000_000, "Золото": 5_000}},
-        {"name": "Кисмайо", "terrain": "coast", "climate_severity": 6, "economic_value": 1.2, "resources": {"Нефть": 150_000_000, "Рыба": 800_000}},
-        {"name": "Байдабо", "terrain": "plain", "climate_severity": 7, "economic_value": 0.9, "resources": {"Продовольствие": 10_000_000, "Древесина": 5_000_000}}
+        {"name": "Могадишо", "terrain": "urban", "climate_severity": 7, "economic_value": 1.5, "crime_rate": 60, "population": 2_000_000, "resources": {"Нефть": 200_000_000, "Пресная вода": 20_000_000_000, "Рыба": 500_000}},
+        {"name": "Харгейса", "terrain": "desert", "climate_severity": 8, "economic_value": 0.8, "crime_rate": 60, "population": 2_000_000, "resources": {"Уголь": 50_000_000, "Золото": 5_000}},
+        {"name": "Кисмайо", "terrain": "coast", "climate_severity": 6, "economic_value": 1.2, "crime_rate": 60, "population": 2_000_000, "resources": {"Нефть": 150_000_000, "Рыба": 800_000}},
+        {"name": "Байдабо", "terrain": "plain", "climate_severity": 7, "economic_value": 0.9, "crime_rate": 60, "population": 2_000_000, "resources": {"Продовольствие": 10_000_000, "Древесина": 5_000_000}}
     ],
     "Афганистан": [
-        {"name": "Кабул", "terrain": "urban", "climate_severity": 7, "economic_value": 1.3, "resources": {"Природный газ": 500_000_000_000, "Уголь": 80_000_000}},
-        {"name": "Кандагар", "terrain": "desert", "climate_severity": 8, "economic_value": 0.9, "resources": {"Железная руда": 40_000_000, "Медь": 5_000_000}},
-        {"name": "Герат", "terrain": "desert", "climate_severity": 7, "economic_value": 1.0, "resources": {"Уголь": 30_000_000, "Литий": 10_000}},
-        {"name": "Мазари-Шариф", "terrain": "mountain", "climate_severity": 6, "economic_value": 0.8, "resources": {"Железная руда": 60_000_000, "Золото": 2_000}}
+        {"name": "Кабул", "terrain": "urban", "climate_severity": 7, "economic_value": 1.3, "crime_rate": 60, "population": 2_000_000, "resources": {"Природный газ": 500_000_000_000, "Уголь": 80_000_000}},
+        {"name": "Кандагар", "terrain": "desert", "climate_severity": 8, "economic_value": 0.9, "crime_rate": 60, "population": 2_000_000, "resources": {"Железная руда": 40_000_000, "Медь": 5_000_000}},
+        {"name": "Герат", "terrain": "desert", "climate_severity": 7, "economic_value": 1.0, "crime_rate": 60, "population": 2_000_000, "resources": {"Уголь": 30_000_000, "Литий": 10_000}},
+        {"name": "Мазари-Шариф", "terrain": "mountain", "climate_severity": 6, "economic_value": 0.8, "crime_rate": 60, "population": 2_000_000, "resources": {"Железная руда": 60_000_000, "Золото": 2_000}}
     ],
     # ... все остальные страны и провинции ...
 }
