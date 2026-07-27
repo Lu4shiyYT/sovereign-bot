@@ -1089,8 +1089,21 @@ class PlayerSelectView(discord.ui.View):
     def __init__(self, country_id, players):
         super().__init__(timeout=None)
         self.country_id = country_id
+        # Оставляем только тех, с кем нет активной войны
+        filtered = []
+        for p in players:
+            # Проверяем активную войну
+            existing = await async_fetch_one(
+                "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
+                (country_id, p['id'], p['id'], country_id)
+            )
+            if not existing:
+                filtered.append(p)
+        if not filtered:
+            self.add_item(discord.ui.Button(label="Нет доступных игроков", disabled=True, style=discord.ButtonStyle.secondary))
+            return
         select = discord.ui.Select(placeholder="Выберите игрока...",
-                                   options=[discord.SelectOption(label=f"{p['name']} (ID{p['owner_id']})", value=str(p['id'])) for p in players])
+                                   options=[discord.SelectOption(label=f"{p['name']} (ID{p['owner_id']})", value=str(p['id'])) for p in filtered])
         select.callback = self.player_selected
         self.add_item(select)
 
@@ -1104,8 +1117,19 @@ class BotSelectView(discord.ui.View):
     def __init__(self, country_id, bots):
         super().__init__(timeout=None)
         self.country_id = country_id
+        filtered = []
+        for b in bots:
+            existing = await async_fetch_one(
+                "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
+                (country_id, b['id'], b['id'], country_id)
+            )
+            if not existing:
+                filtered.append(b)
+        if not filtered:
+            self.add_item(discord.ui.Button(label="Нет доступных ботов", disabled=True, style=discord.ButtonStyle.secondary))
+            return
         select = discord.ui.Select(placeholder="Выберите бота...",
-                                   options=[discord.SelectOption(label=b['name'], value=str(b['id'])) for b in bots])
+                                   options=[discord.SelectOption(label=b['name'], value=str(b['id'])) for b in filtered])
         select.callback = self.bot_selected
         self.add_item(select)
 
@@ -1166,8 +1190,46 @@ class WarListView(discord.ui.View):
         self.add_item(select)
 
     async def war_selected(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         war_id = int(interaction.data['values'][0])
-        await interaction.response.send_message("Загрузка детальной информации...", ephemeral=True)
+        game_cog = interaction.client.get_cog("Game")
+        if game_cog:
+            embed, error = await game_cog._build_war_detail(war_id)
+            if error:
+                await interaction.followup.send(error, ephemeral=True)
+            else:
+                # Добавляем кнопки "Совершить ход" и "Мир" для активной войны
+                view = discord.ui.View()
+                war = await async_fetch_one("SELECT status, attacker_id, defender_id FROM wars WHERE id=?", (war_id,))
+                if war and war['status'] == 'active':
+                    view.add_item(WarActionButton(war_id, self.country_id))
+                    view.add_item(PeaceOfferButton(war_id, self.country_id))
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        else:
+            await interaction.followup.send("Ошибка получения данных.", ephemeral=True)
+
+class WarActionButton(discord.ui.Button):
+    def __init__(self, war_id, country_id):
+        super().__init__(label="Совершить ход", style=discord.ButtonStyle.green)
+        self.war_id = war_id
+        self.country_id = country_id
+
+    async def callback(self, interaction: discord.Interaction):
+        # Здесь можно открыть модальное окно для выбора типа хода
+        await interaction.response.send_message("Функция хода появится позже.", ephemeral=True)
+
+class PeaceOfferButton(discord.ui.Button):
+    def __init__(self, war_id, country_id):
+        super().__init__(label="Предложить мир", style=discord.ButtonStyle.blurple)
+        self.war_id = war_id
+        self.country_id = country_id
+
+    async def callback(self, interaction: discord.Interaction):
+        war_cog = interaction.client.get_cog("War")
+        if war_cog:
+            await war_cog._make_peace(interaction, self.war_id)
+        else:
+            await interaction.response.send_message("Ког войны не найден.", ephemeral=True)
 
 class WarListEmptyView(discord.ui.View):
     def __init__(self, country_id):
@@ -1422,6 +1484,33 @@ class Game(commands.Cog):
         if not channel:
             channel = await guild.create_text_channel(name)
         return channel
+
+    async def _build_war_detail(self, war_id):
+        war = await async_fetch_one("SELECT * FROM wars WHERE id=?", (war_id,))
+        if not war:
+            return None, "Война не найдена."
+        attacker = await async_fetch_one("SELECT name, display_name, ruler_name, army_count, combat_capability FROM countries WHERE id=?", (war['attacker_id'],))
+        defender = await async_fetch_one("SELECT name, display_name, ruler_name, army_count, combat_capability FROM countries WHERE id=?", (war['defender_id'],))
+        moves = await async_fetch_all("SELECT * FROM war_moves WHERE war_id=? ORDER BY created_at DESC LIMIT 10", (war_id,))
+        reports = await async_fetch_all("SELECT report_text, created_at FROM war_reports WHERE war_id=? ORDER BY created_at DESC LIMIT 5", (war_id,))
+        
+        embed = discord.Embed(title=f"Война: {attacker['name']} vs {defender['name']}", color=0xff0000 if war['status']=='active' else 0x808080)
+        embed.add_field(name="Статус", value="Активна" if war['status']=='active' else "Завершена", inline=True)
+        embed.add_field(name="Причина", value=war.get('reason','Не указана'), inline=True)
+        embed.add_field(name="Дата начала", value=datetime.datetime.fromtimestamp(war['start_time']).strftime('%d.%m.%Y %H:%M'), inline=False)
+        embed.add_field(name=f"{attacker['name']} (армия)", value=f"{attacker['army_count']} чел.", inline=True)
+        embed.add_field(name=f"{defender['name']} (армия)", value=f"{defender['army_count']} чел.", inline=True)
+        
+        if moves:
+            move_list = []
+            for m in moves:
+                move_list.append(f"{datetime.datetime.fromtimestamp(m['created_at']).strftime('%H:%M')} – {m['move_type']}")
+            embed.add_field(name="Последние ходы", value="\n".join(move_list[:5]), inline=False)
+        if reports:
+            report_list = [r['report_text'][:100] + "..." for r in reports]
+            embed.add_field(name="Сводки", value="\n".join(report_list), inline=False)
+        
+        return embed, None
 
     # --- Основные команды ---
     @app_commands.command(name="reg", description="Зарегистрироваться как правитель свободной страны")
