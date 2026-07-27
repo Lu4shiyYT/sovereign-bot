@@ -45,10 +45,11 @@ async def on_ready():
 async def monthly_income():
     from database import async_fetch_all, async_execute, async_get_game_date
     import datetime
-    print("Начисление месячного дохода...", flush=True)
+    print("Начисление месячного дохода...")
     countries = await async_fetch_all("SELECT * FROM countries WHERE owner_id IS NOT NULL")
     for c in countries:
-        income = {"Доллары": 0, "Продовольствие": 0, "Нефть": 0}
+        income_money = 0
+        income_resources = {}
         buildings = await async_fetch_all(
             "SELECT building_type, level FROM buildings WHERE country_id=? AND build_end_time=0 AND level>0",
             (c['id'],)
@@ -56,42 +57,58 @@ async def monthly_income():
         for b in buildings:
             lvl = b['level']
             if b['building_type'] == "Ферма":
-                income["Продовольствие"] += 100 * lvl
+                income_resources["Продовольствие"] = income_resources.get("Продовольствие", 0) + 100 * lvl
             elif b['building_type'] == "Шахта":
-                income["Нефть"] += 50 * lvl
+                income_resources["Нефть"] = income_resources.get("Нефть", 0) + 50 * lvl
             elif b['building_type'] == "Бизнес-центр":
-                income["Доллары"] += 200 * lvl
+                income_money += 200 * lvl
+
         if c['mobilization']:
-            for res in income:
-                income[res] = int(income[res] * 0.5)
-        for res_name, amount in income.items():
+            income_money = int(income_money * 0.5)
+            for res in income_resources:
+                income_resources[res] = int(income_resources[res] * 0.5)
+
+        # Начисление денег в бюджет
+        if income_money > 0:
+            await async_execute("UPDATE countries SET budget = budget + ? WHERE id = ?", (income_money, c['id']))
+        # Начисление ресурсов
+        for res_name, amount in income_resources.items():
             if amount > 0:
                 await async_execute(
                     "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
                     (c['id'], res_name, amount, amount)
                 )
+
+        # Содержание армии
         army_count = c['army_count']
         upkeep_money = int(army_count * 0.1)
         upkeep_food = int(army_count * 0.05)
         if upkeep_money > 0:
-            await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (upkeep_money, c['id']))
+            await async_execute("UPDATE countries SET budget = budget - ? WHERE id = ?", (upkeep_money, c['id']))
         if upkeep_food > 0:
             await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (upkeep_food, c['id']))
+
+        # Потребление продовольствия населением
         population = c['population']
         food_consumption = int(population * 0.001)
         if food_consumption > 0:
             await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (food_consumption, c['id']))
+
+        # Прирост населения
         growth_rate_year = c['demographic_growth'] / 100.0
         growth_per_month = int(population * growth_rate_year / 12)
         if growth_per_month > 0:
             new_population = population + growth_per_month
             await async_execute("UPDATE countries SET population = ? WHERE id=?", (new_population, c['id']))
+
+        # Личное сообщение владельцу
         user = bot.get_user(c['owner_id'])
         if user:
             try:
                 await user.send(
                     f"**Месячный отчёт для {c['display_name'] or c['name']}**\n"
-                    f"Доход: Доллары +{income['Доллары']}, Продовольствие +{income['Продовольствие']}, Нефть +{income['Нефть']}\n"
+                    f"Доход: Доллары +{income_money}\n"
+                    f"Ресурсы: " + ", ".join(f"{r} +{v}" for r, v in income_resources.items()) + "\n"
                     f"Содержание армии: -{upkeep_money}$ и -{upkeep_food} прод.\n"
                     f"Потребление продовольствия населением: -{food_consumption}\n"
                     f"Прирост населения: +{growth_per_month} чел.\n"
@@ -99,6 +116,7 @@ async def monthly_income():
             except:
                 pass
 
+    # --- ОБНОВЛЕНИЕ ИГРОВОЙ ДАТЫ И НАЗВАНИЯ КАНАЛА ---
     game_date = await async_get_game_date()
     next_date = game_date + datetime.timedelta(days=1)
     await async_execute("UPDATE game_date SET day=?, month=?, year=? WHERE id=1",
@@ -109,7 +127,7 @@ async def monthly_income():
         try:
             await channel.edit(name=f"📅 {next_date.strftime('%d.%m.%Y')}")
         except Exception as e:
-            print(f"Не удалось изменить название канала: {e}", flush=True)
+            print(f"Не удалось изменить название канала: {e}")
 
 @bot.command(name="sync")
 @commands.is_owner()
