@@ -794,9 +794,12 @@ class GameMenu(discord.ui.View):
 
     @discord.ui.button(label="🏭 Постройки", style=discord.ButtonStyle.primary)
     async def buildings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = BuildingsView(self.country_id)
-        await view.refresh_buttons(interaction)
-        await interaction.response.edit_message(content="Меню построек", view=view)
+        provinces = await async_fetch_all("SELECT id, name FROM provinces WHERE country_id=?", (self.country_id,))
+        if not provinces:
+            await interaction.response.send_message("У вашей страны нет регионов.", ephemeral=True)
+            return
+        view = ProvinceSelectView(self.country_id, provinces)
+        await interaction.response.edit_message(content="Выберите регион:", view=view)
 
     @discord.ui.button(label="💰 Ресурсы", style=discord.ButtonStyle.primary)
     async def resources_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -837,6 +840,316 @@ class GameMenu(discord.ui.View):
                 content += f"Лот #{lot['id']}: {lot['resource_name']} x{lot['amount']} за {lot['price']}$ (продавец: {seller_name})\n"
             content += "\nИспользуйте `/market buy <id>` для покупки."
         await interaction.response.edit_message(content=content, view=MarketMenuView(self.country_id))
+
+class ProvinceSelectView(discord.ui.View):
+    def __init__(self, country_id, provinces):
+        super().__init__(timeout=None)
+        self.country_id = country_id
+        options = [discord.SelectOption(label=p['name'], value=str(p['id'])) for p in provinces]
+        select = discord.ui.Select(placeholder="Регион...", options=options)
+        select.callback = self.select_province
+        self.add_item(select)
+
+    async def select_province(self, interaction: discord.Interaction):
+        province_id = int(interaction.data['values'][0])
+        await self.show_province_info(interaction, province_id)
+
+    async def show_province_info(self, interaction, province_id):
+        # Обновляем статусы построек перед показом информации
+        game_cog = interaction.client.get_cog("Game")
+        if game_cog:
+            await game_cog._update_buildings_status(self.country_id)
+            
+        province = await async_fetch_one("SELECT * FROM provinces WHERE id=?", (province_id,))
+        # Получить crime_rate и population из PROVINCES_DATA или из БД (если добавили поля)
+        # Пока заглушка
+        info = f"**Регион: {province['name']}**\n"
+        info += f"Тип местности: {province['terrain_type']}\n"
+        info += f"Экономическая ценность: {province['economic_value']}\n"
+        # Ресурсы
+        res_rows = await async_fetch_all("SELECT resource_name, amount FROM province_resources WHERE province_id=?", (province_id,))
+        if res_rows:
+            info += "Потенциальные ресурсы: " + ", ".join(r['resource_name'] for r in res_rows) + "\n"
+        view = ProvinceMenuView(self.country_id, province_id)
+        await interaction.response.edit_message(content=info, view=view)
+
+class ProvinceMenuView(discord.ui.View):
+    def __init__(self, country_id, province_id):
+        super().__init__(timeout=None)
+        self.country_id = country_id
+        self.province_id = province_id
+
+    @discord.ui.button(label="Постройки", style=discord.ButtonStyle.primary)
+    async def buildings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="Выберите раздел:", view=BuildingCategoryView(self.country_id, self.province_id))
+
+    @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        provinces = await async_fetch_all("SELECT id, name FROM provinces WHERE country_id=?", (self.country_id,))
+        view = ProvinceSelectView(self.country_id, provinces)
+        await interaction.response.edit_message(content="Выберите регион:", view=view)
+
+class BuildingCategoryView(discord.ui.View):
+    def __init__(self, country_id, province_id):
+        super().__init__(timeout=None)
+        self.country_id = country_id
+        self.province_id = province_id
+
+    @discord.ui.button(label="Завершённые постройки", style=discord.ButtonStyle.success)
+    async def completed_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        buildings = await async_fetch_all(
+            "SELECT * FROM buildings WHERE country_id=? AND province_id=? AND status='completed'",
+            (self.country_id, self.province_id))
+        if not buildings:
+            await interaction.response.send_message("Нет завершённых построек.", ephemeral=True)
+            return
+        view = BuildingListView(self.country_id, self.province_id, buildings, mode='completed')
+        await interaction.response.edit_message(content="Ваши постройки:", view=view)
+
+    @discord.ui.button(label="В процессе стройки", style=discord.ButtonStyle.warning)
+    async def constructing_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        buildings = await async_fetch_all(
+            "SELECT * FROM buildings WHERE country_id=? AND province_id=? AND status IN ('constructing','upgrading')",
+            (self.country_id, self.province_id))
+        if not buildings:
+            await interaction.response.send_message("Нет строящихся объектов.", ephemeral=True)
+            return
+        view = BuildingListView(self.country_id, self.province_id, buildings, mode='in_progress')
+        await interaction.response.edit_message(content="Строящиеся объекты:", view=view)
+
+    @discord.ui.button(label="Новая постройка", style=discord.ButtonStyle.primary)
+    async def new_building_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Получаем открытые типы построек для страны
+        opened = await async_fetch_all("SELECT building_type FROM opened_buildings WHERE country_id=?", (self.country_id,))
+        available_types = [row['building_type'] for row in opened]
+        if not available_types:
+            await interaction.response.send_message("Нет доступных типов построек.", ephemeral=True)
+            return
+        view = NewBuildingTypeView(self.country_id, self.province_id, available_types)
+        await interaction.response.edit_message(content="Выберите тип постройки:", view=view)
+
+    @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await ProvinceMenuView(self.country_id, self.province_id).show_province_info(interaction, self.province_id)
+
+class BuildingListView(discord.ui.View):
+    def __init__(self, country_id, province_id, buildings, mode='completed'):
+        super().__init__(timeout=None)
+        self.country_id = country_id
+        self.province_id = province_id
+        self.buildings = buildings
+        self.mode = mode
+        # Создаём Select для выбора конкретной постройки
+        options = []
+        for b in buildings:
+            label = f"{b['building_name']} (ур.{b['level']})"
+            if mode == 'in_progress':
+                if b['status'] == 'constructing':
+                    label += " - строится"
+                else:
+                    label += f" - улучшение до {b['level']+1}"
+            options.append(discord.SelectOption(label=label[:100], value=str(b['id'])))
+        select = discord.ui.Select(placeholder="Выберите постройку...", options=options)
+        select.callback = self.show_building_detail
+        self.add_item(select)
+        # Кнопка Назад
+        self.add_item(BackButton(self.country_id))
+
+    async def show_building_detail(self, interaction: discord.Interaction):
+        building_id = int(interaction.data['values'][0])
+        building = await async_fetch_one("SELECT * FROM buildings WHERE id=?", (building_id,))
+        if not building:
+            await interaction.response.send_message("Постройка не найдена.", ephemeral=True)
+            return
+        view = BuildingDetailView(self.country_id, self.province_id, building)
+        embed = await self._build_building_embed(building)
+        await interaction.response.edit_message(content="", embed=embed, view=view)
+
+    async def _build_building_embed(self, building):
+        btype = BUILDING_TYPES[building['building_type']]
+        embed = discord.Embed(title=f"{building['building_name']} (ур.{building['level']})", color=0x00ff00)
+        embed.add_field(name="Тип", value=building['building_type'], inline=True)
+        if building['status'] == 'completed':
+            embed.add_field(name="Статус", value="✅ Завершена", inline=True)
+        else:
+            embed.add_field(name="Статус", value="Строится", inline=True)
+        if building['status'] == 'completed':
+            # Показываем производство
+            production = ""
+            for res, base in btype.get('resource_production', {}).items():
+                prod = int(base * (btype['upgrade_multiplier'] ** building['level']))
+                production += f"{res}: {prod}/цикл\n"
+            if btype.get('money_production'):
+                prod = int(btype['money_production'] * (btype['upgrade_multiplier'] ** building['level']))
+                production += f"Доллары: {prod}/цикл\n"
+            if production:
+                embed.add_field(name="Производство", value=production, inline=False)
+            # Улучшение
+            next_level = building['level'] + 1
+            if next_level > 5:
+                embed.add_field(name="Уровень", value="Максимальный", inline=False)
+            else:
+                cost = btype['cost']
+                time_sec = btype['build_time'] * (btype['upgrade_multiplier'] ** building['level'])
+                cost_str = "\n".join(f"{r}: {int(amount * (btype['upgrade_multiplier'] ** building['level']))}" for r, amount in cost.items())
+                embed.add_field(name="Улучшение до уровня {}".format(next_level), value=f"Стоимость:\n{cost_str}\nВремя: {time_sec} сек", inline=False)
+        return embed
+
+class BuildingDetailView(discord.ui.View):
+    def __init__(self, country_id, province_id, building):
+        super().__init__(timeout=None)
+        self.country_id = country_id
+        self.province_id = province_id
+        self.building = building
+        if building['status'] == 'completed':
+            btype = BUILDING_TYPES[building['building_type']]
+            if building['level'] < 5:
+                self.add_item(UpgradeButton(country_id, province_id, building))
+        self.add_item(BackButton(country_id))
+
+class UpgradeButton(discord.ui.Button):
+    def __init__(self, country_id, province_id, building):
+        super().__init__(label="Улучшить уровень", style=discord.ButtonStyle.success)
+        self.country_id = country_id
+        self.province_id = province_id
+        self.building = building
+
+    async def callback(self, interaction: discord.Interaction):
+        # Проверка лимита активных строек (7)
+        country = await async_fetch_one("SELECT active_constructions, budget FROM countries WHERE id=?", (self.country_id,))
+        if not country:
+            await interaction.response.send_message("Ошибка.", ephemeral=True)
+            return
+        if country['active_constructions'] >= 7:
+            await interaction.response.send_message("Достигнут лимит одновременных строек (7).", ephemeral=True)
+            return
+        btype = BUILDING_TYPES[self.building['building_type']]
+        next_level = self.building['level'] + 1
+        if next_level > 5:
+            await interaction.response.send_message("Максимальный уровень.", ephemeral=True)
+            return
+        cost = btype['cost']
+        multiplier = btype['upgrade_multiplier'] ** self.building['level']
+        # Списание ресурсов
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except:
+            pass
+        # Проверка денег в бюджете
+        if "Доллары" in cost:
+            money_needed = int(cost["Доллары"] * multiplier)
+            if country['budget'] < money_needed:
+                await interaction.followup.send("Недостаточно денег в бюджете.", ephemeral=True)
+                return
+            await async_execute("UPDATE countries SET budget = budget - ? WHERE id=?", (money_needed, self.country_id))
+        # Проверка остальных ресурсов
+        for res, amount in cost.items():
+            if res == "Доллары":
+                continue
+            needed = int(amount * multiplier)
+            # Проверяем в resources
+            row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name=?", (self.country_id, res))
+            if not row or row['amount'] < needed:
+                await interaction.followup.send(f"Недостаточно {res}.", ephemeral=True)
+                return
+        # Списываем ресурсы
+        for res, amount in cost.items():
+            if res == "Доллары":
+                continue
+            needed = int(amount * multiplier)
+            await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?", (needed, self.country_id, res))
+        # Увеличиваем счётчик активных строек
+        await async_execute("UPDATE countries SET active_constructions = active_constructions + 1 WHERE id=?", (self.country_id,))
+        # Запускаем улучшение: устанавливаем статус 'upgrading' и время окончания
+        build_time = btype['build_time'] * multiplier
+        end_time = time.time() + build_time
+        await async_execute(
+            "UPDATE buildings SET status='upgrading', build_end_time=? WHERE id=?",
+            (end_time, self.building['id'])
+        )
+        await interaction.followup.send(f"Улучшение запущено. Завершится через {int(build_time)} сек.", ephemeral=True)
+
+class NewBuildingTypeView(discord.ui.View):
+    def __init__(self, country_id, province_id, available_types):
+        super().__init__(timeout=None)
+        self.country_id = country_id
+        self.province_id = province_id
+        options = [discord.SelectOption(label=t, value=t) for t in available_types]
+        select = discord.ui.Select(placeholder="Тип постройки...", options=options)
+        select.callback = self.type_selected
+        self.add_item(select)
+
+    async def type_selected(self, interaction: discord.Interaction):
+        building_type = interaction.data['values'][0]
+        modal = BuildingNameModal(self.country_id, self.province_id, building_type)
+        await interaction.response.send_modal(modal)
+
+class BuildingNameModal(discord.ui.Modal, title="Название постройки"):
+    name = discord.ui.TextInput(label="Введите название", placeholder="Моя шахта", required=True)
+
+    def __init__(self, country_id, province_id, building_type):
+        super().__init__()
+        self.country_id = country_id
+        self.province_id = province_id
+        self.building_type = building_type
+
+    async def on_submit(self, interaction: discord.Interaction):
+        btype = BUILDING_TYPES[self.building_type]
+        # Проверка лимита активных строек (7)
+        country = await async_fetch_one("SELECT active_constructions, budget FROM countries WHERE id=?", (self.country_id,))
+        if not country:
+            await interaction.response.send_message("Ошибка.", ephemeral=True)
+            return
+        if country['active_constructions'] >= 7:
+            await interaction.response.send_message("Достигнут лимит одновременных строек (7).", ephemeral=True)
+            return
+        # Проверка национального лимита
+        nat_limit = await async_fetch_one("SELECT max_national FROM building_limits WHERE country_id=? AND building_type=?", (self.country_id, self.building_type))
+        max_nat = nat_limit['max_national'] if nat_limit else 0
+        current_nat = await async_fetch_one("SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND building_type=?", (self.country_id, self.building_type))
+        if current_nat['cnt'] >= max_nat:
+            await interaction.response.send_message(f"Достигнут национальный лимит для {self.building_type}.", ephemeral=True)
+            return
+        # Проверка регионального лимита
+        reg_limit = await async_fetch_one("SELECT max_per_region FROM building_limits WHERE country_id=? AND building_type=?", (self.country_id, self.building_type))
+        max_reg = reg_limit['max_per_region'] if reg_limit else 1
+        current_reg = await async_fetch_one("SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND province_id=? AND building_type=?", (self.country_id, self.province_id, self.building_type))
+        if current_reg['cnt'] >= max_reg:
+            await interaction.response.send_message(f"Достигнут региональный лимит для {self.building_type}.", ephemeral=True)
+            return
+
+        # Списание ресурсов
+        cost = btype['cost']
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except:
+            pass
+        if "Доллары" in cost:
+            if country['budget'] < cost["Доллары"]:
+                await interaction.followup.send("Недостаточно денег в бюджете.", ephemeral=True)
+                return
+            await async_execute("UPDATE countries SET budget = budget - ? WHERE id=?", (cost["Доллары"], self.country_id))
+        for res, amount in cost.items():
+            if res == "Доллары":
+                continue
+            row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name=?", (self.country_id, res))
+            if not row or row['amount'] < amount:
+                await interaction.followup.send(f"Недостаточно {res}.", ephemeral=True)
+                return
+        for res, amount in cost.items():
+            if res == "Доллары":
+                continue
+            await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?", (amount, self.country_id, res))
+
+        # Увеличиваем счётчик активных строек
+        await async_execute("UPDATE countries SET active_constructions = active_constructions + 1 WHERE id=?", (self.country_id,))
+        # Создаём запись постройки со статусом constructing
+        end_time = time.time() + btype['build_time']
+        await async_execute(
+            "INSERT INTO buildings (country_id, province_id, building_type, building_name, level, build_end_time, status) VALUES (?, ?, ?, ?, 0, ?, 'constructing')",
+            (self.country_id, self.province_id, self.building_type, self.name.value, end_time)
+        )
+        await interaction.followup.send(f"Постройка '{self.name.value}' начата. Завершится через {btype['build_time']} сек.", ephemeral=True)
 
 class ArmyView(discord.ui.View):
     def __init__(self, country_id):
@@ -1496,6 +1809,34 @@ class Game(commands.Cog):
         except Exception as e:
             print(f"Ошибка получения страны: {e}")
             return None
+
+    async def _update_buildings_status(self, country_id):
+        now = time.time()
+        # Завершаем constructing -> completed (уровень остаётся 0)
+        await async_execute(
+            "UPDATE buildings SET status='completed', build_end_time=0 WHERE country_id=? AND status='constructing' AND build_end_time <= ?",
+            (country_id, now)
+        )
+        # Завершаем upgrading -> completed и повышаем уровень
+        # Получаем список улучшающихся и завершившихся
+        upgrading = await async_fetch_all(
+            "SELECT * FROM buildings WHERE country_id=? AND status='upgrading' AND build_end_time <= ?",
+            (country_id, now)
+        )
+        for b in upgrading:
+            new_level = b['level'] + 1
+            await async_execute(
+                "UPDATE buildings SET level=?, status='completed', build_end_time=0 WHERE id=?",
+                (new_level, b['id'])
+            )
+        # Уменьшаем счётчик активных строек на количество завершённых
+        completed = len(upgrading) + await async_fetch_one(
+            "SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND status='constructing' AND build_end_time <= ?",
+            (country_id, now)
+        )
+        if completed:
+            await async_execute("UPDATE countries SET active_constructions = active_constructions - ? WHERE id=? AND active_constructions >= ?",
+                                (completed, country_id, completed))
 
     async def _notify_user(self, user_id, message):
         user = self.bot.get_user(user_id)
