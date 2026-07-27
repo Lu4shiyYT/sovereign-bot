@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from database import get_conn, init_db, async_fetch_one, async_execute
 from data.countries import initial_countries, initial_provinces
+from data.resources import MANUFACTURED_RESOURCES
 import os
 import asyncio
 import datetime
