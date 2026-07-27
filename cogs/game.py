@@ -1829,6 +1829,20 @@ class Game(commands.Cog):
                 "UPDATE buildings SET level=?, status='completed', build_end_time=0 WHERE id=?",
                 (new_level, b['id'])
             )
+        # Увеличиваем economic_value провинции (не более 10)
+        # Собираем все завершённые сейчас постройки (constructing и upgrading)
+        completed_buildings = upgrading + await async_fetch_all(
+            "SELECT * FROM buildings WHERE country_id=? AND status='constructing' AND build_end_time <= ?",
+            (country_id, now)
+        )
+        for b in completed_buildings:
+            btype = BUILDING_TYPES.get(b['building_type'])
+            if btype:
+                boost = 0.5 * (btype['upgrade_multiplier'] ** (b['level'] + 1))
+                await async_execute(
+                    "UPDATE provinces SET economic_value = MIN(10, economic_value + ?) WHERE id=?",
+                    (boost, b['province_id'])
+                )
         # Уменьшаем счётчик активных строек на количество завершённых
         completed = len(upgrading) + await async_fetch_one(
             "SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND status='constructing' AND build_end_time <= ?",
