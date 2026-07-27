@@ -1,32 +1,50 @@
+# data/buildings.py
+
 BUILDING_TYPES = {
-    "Ферма": {
-        "cost": {"Доллары": 25_000, "Продовольствие": 50_000},
-        "build_time": 60,          # секунд
-        "upgrade_multiplier": 1.5,
-        "produces": {"Продовольствие": 10}
-    },
     "Шахта": {
-        "cost": {"Доллары": 100_000, "Древесина": 30_000},
-        "build_time": 90,
+        "cost": {"Доллары": 200_000, "Древесина": 30_000},
+        "build_time": 300,  # секунд (5 минут)
+        "upgrade_multiplier": 2.0,
+        "resource_production": {"Уголь": 80},  # базовое количество за 2 часа
+        "max_national": 2,
+        "max_per_region": 1,
+        "description": "Добывает уголь."
+    },
+    "Ферма": {
+        "cost": {"Доллары": 100_000, "Продовольствие": 50_000},
+        "build_time": 240,
         "upgrade_multiplier": 1.8,
-        "produces": {"Уголь": 8, "Железная руда": 5}
+        "resource_production": {"Продовольствие": 120},
+        "max_national": 3,
+        "max_per_region": 1,
+        "description": "Выращивает продовольствие."
+    },
+    "Лесопилка": {
+        "cost": {"Доллары": 150_000, "Древесина": 20_000},
+        "build_time": 360,
+        "upgrade_multiplier": 2.2,
+        "resource_production": {"Древесина": 100},
+        "max_national": 2,
+        "max_per_region": 1,
+        "description": "Заготавливает древесину."
     },
     "Бизнес-центр": {
-        "cost": {"Доллары": 200_000, "Бетон": 20_000, "Сталь": 10_000},
-        "build_time": 120,
-        "upgrade_multiplier": 2.0,
-        "produces": {"Доллары": 50_000}
+        "cost": {"Доллары": 500_000, "Бетон": 20_000, "Сталь": 10_000},
+        "build_time": 600,
+        "upgrade_multiplier": 2.5,
+        "resource_production": {},  # даёт деньги напрямую
+        "money_production": 2000,    # базовый доход долларами за цикл
+        "max_national": 2,
+        "max_per_region": 1,
+        "description": "Приносит доход в бюджет."
     },
-    "Казарма": {
-        "cost": {"Доллары": 50_000, "Продовольствие": 150, "Древесина": 12_000, "Бетон": 2_000},
-        "build_time": 150,
-        "upgrade_multiplier": 1.7,
-        "produces": {}
-    },
-    "Лаборатория": {
-        "cost": {"Доллары": 30_000_000, "Электроэнергия": 100, "Бетон": 48_000, "Сталь": 72_000},
-        "build_time": 200,
-        "upgrade_multiplier": 2.2,
-        "produces": {"Очки науки": 5}
+    "Завод электроники": {
+        "cost": {"Доллары": 1_000_000, "Сталь": 50_000, "Медь": 20_000},
+        "build_time": 900,
+        "upgrade_multiplier": 3.0,
+        "resource_production": {"Электроника": 50},
+        "max_national": 1,
+        "max_per_region": 1,
+        "description": "Производит электронику."
     }
 }
