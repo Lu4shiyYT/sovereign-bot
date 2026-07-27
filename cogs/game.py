@@ -1493,14 +1493,16 @@ class Game(commands.Cog):
         defender = await async_fetch_one("SELECT name, display_name, ruler_name, army_count, combat_capability FROM countries WHERE id=?", (war['defender_id'],))
         moves = await async_fetch_all("SELECT * FROM war_moves WHERE war_id=? ORDER BY created_at DESC LIMIT 10", (war_id,))
         reports = await async_fetch_all("SELECT report_text, created_at FROM war_reports WHERE war_id=? ORDER BY created_at DESC LIMIT 5", (war_id,))
-        
+
         embed = discord.Embed(title=f"Война: {attacker['name']} vs {defender['name']}", color=0xff0000 if war['status']=='active' else 0x808080)
         embed.add_field(name="Статус", value="Активна" if war['status']=='active' else "Завершена", inline=True)
-        embed.add_field(name="Причина", value=war.get('reason','Не указана'), inline=True)
+        # Исправлено: безопасное получение reason
+        reason = war['reason'] if 'reason' in war.keys() else 'Не указана'
+        embed.add_field(name="Причина", value=reason, inline=True)
         embed.add_field(name="Дата начала", value=datetime.datetime.fromtimestamp(war['start_time']).strftime('%d.%m.%Y %H:%M'), inline=False)
         embed.add_field(name=f"{attacker['name']} (армия)", value=f"{attacker['army_count']} чел.", inline=True)
         embed.add_field(name=f"{defender['name']} (армия)", value=f"{defender['army_count']} чел.", inline=True)
-        
+
         if moves:
             move_list = []
             for m in moves:
@@ -1509,7 +1511,7 @@ class Game(commands.Cog):
         if reports:
             report_list = [r['report_text'][:100] + "..." for r in reports]
             embed.add_field(name="Сводки", value="\n".join(report_list), inline=False)
-        
+
         return embed, None
 
     # --- Основные команды ---
