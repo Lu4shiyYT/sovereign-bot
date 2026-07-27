@@ -192,8 +192,9 @@ except ImportError:
 
 # Доступные ресурсы
 RESOURCE_NAMES = [
-    "Нефть", "Природный газ", "Уголь", "Железная руда",
-    "Продовольствие", "Древесина", "Пресная вода"
+    "Нефть", "Природный газ", "Уголь", "Железная руда", "Медь", "Алюминий",
+    "Уран", "Золото", "Серебро", "Алмазы", "Древесина", "Пресная вода",
+    "Продовольствие", "Редкоземельные металлы", "Кремний", "Литий", "Каучук"
 ]
 
 # ========================
@@ -406,8 +407,7 @@ class StatsView(discord.ui.View):
 
         if section == "main":
             content += header
-            budget_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
-            budget_val = budget_row['amount'] if budget_row else 0
+            budget_val = country['budget']
             content += f"{EMOJI['budget']} Бюджет: {format_number(budget_val, 2)}$\n"
             pop = country.get('population', 0)
             content += f"{EMOJI['population']} Население: {format_number(pop)} человек\n"
@@ -942,6 +942,15 @@ class BuildingsView(discord.ui.View):
 
             cost = {res: int(amount * BUILDING_TYPES[building_type]["upgrade_multiplier"] ** current_level)
                     for res, amount in BUILDING_TYPES[building_type]["cost"].items()}
+            # Отдельно обрабатываем деньги
+            if "Доллары" in cost:
+                money_needed = cost.pop("Доллары")
+                country = await async_fetch_one("SELECT budget FROM countries WHERE id=?", (self.country_id,))
+                if not country or country['budget'] < money_needed:
+                    await interaction.response.send_message("Недостаточно денег.", ephemeral=True)
+                    return
+                await async_execute("UPDATE countries SET budget = budget - ? WHERE id = ?", (money_needed, self.country_id))
+            # Остальные ресурсы
             for res, amount in cost.items():
                 res_row = await async_fetch_one(
                     "SELECT amount FROM resources WHERE country_id=? AND resource_name=?",
@@ -1588,7 +1597,10 @@ class Game(commands.Cog):
             minutes = (remaining % 3600) // 60
             await interaction.response.send_message(f"Бонус можно забрать через {hours} ч {minutes} мин.", ephemeral=True)
             return
-        bonus = {"Доллары": 500, "Продовольствие": 200, "Нефть": 100}
+        # Денежный бонус напрямую в бюджет
+        await async_execute("UPDATE countries SET budget = budget + 100_000_000 WHERE id = ?", (country['id'],))
+        # Ресурсный бонус
+        bonus = {"Продовольствие": 200_000_000}
         for res, amount in bonus.items():
             await async_execute(
                 "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
@@ -1663,16 +1675,11 @@ class Game(commands.Cog):
             cost_money = cost_money // 2
             cost_food = cost_food // 2
 
-        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
-        if not money_row or money_row['amount'] < cost_money:
+        if country['budget'] < cost_money:
             await interaction.response.send_message("Недостаточно денег.", ephemeral=True)
             return
-        food_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Продовольствие'", (country['id'],))
-        if not food_row or food_row['amount'] < cost_food:
-            await interaction.response.send_message("Недостаточно продовольствия.", ephemeral=True)
-            return
-
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (cost_money, country['id']))
+        ...
+        await async_execute("UPDATE countries SET budget = budget - ? WHERE id = ?", (cost_money, country['id']))
         await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (cost_food, country['id']))
         new_army_count = current_army + amount
         await async_execute("UPDATE countries SET army_count = ? WHERE id=?", (new_army_count, country['id']))
@@ -2095,16 +2102,12 @@ class Game(commands.Cog):
             await interaction.response.send_message("Этот игрок не управляет страной.", ephemeral=True)
             return
 
-        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (sender_country['id'],))
-        if not money_row or money_row['amount'] < amount:
+        if sender_country['budget'] < amount:
             await interaction.response.send_message("Недостаточно денег для перевода.", ephemeral=True)
             return
 
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (amount, sender_country['id']))
-        await async_execute(
-            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
-            (receiver_country['id'], amount, amount)
-        )
+        await async_execute("UPDATE countries SET budget = budget - ? WHERE id = ?", (amount, sender_country['id']))
+        await async_execute("UPDATE countries SET budget = budget + ? WHERE id = ?", (amount, receiver_country['id']))
 
         channel_id = CHANNEL_IDS.get("lendlease")
         sender_name = sender_country['display_name'] or sender_country['name']
@@ -2212,16 +2215,12 @@ class Game(commands.Cog):
             await interaction.response.send_message("Нельзя купить свой собственный лот.", ephemeral=True)
             return
 
-        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (buyer_country['id'],))
-        if not money_row or money_row['amount'] < lot['price']:
+        if buyer_country['budget'] < lot['price']:
             await interaction.response.send_message("Недостаточно денег для покупки.", ephemeral=True)
             return
 
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (lot['price'], buyer_country['id']))
-        await async_execute(
-            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
-            (lot['seller_id'], lot['price'], lot['price'])
-        )
+        await async_execute("UPDATE countries SET budget = budget - ? WHERE id = ?", (lot['price'], buyer_country['id']))
+        await async_execute("UPDATE countries SET budget = budget + ? WHERE id = ?", (lot['price'], lot['seller_id']))
         await async_execute(
             "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
             (buyer_country['id'], lot['resource_name'], lot['amount'], lot['amount'])
