@@ -3,6 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 from database import get_conn, init_db, async_fetch_one, async_execute
 from data.countries import initial_countries, initial_provinces
+from data.buildings import BUILDING_TYPES
+from data.provinces import PROVINCES_DATA
 from data.resources import MANUFACTURED_RESOURCES
 import os
 import asyncio
@@ -61,10 +63,21 @@ class Admin(commands.Cog):
                     "INSERT OR IGNORE INTO supply_stocks (country_id, resource_name, amount) VALUES (?, ?, 0)",
                     (country_id, res)
                 )
-            # Провинции
-            provinces = initial_provinces.get(country_data['name'], [country_data['name']])
-            for pname in provinces:
-                cur.execute("INSERT INTO provinces (name, country_id) VALUES (?, ?)", (pname, country_id))
+            # Провинции (с детальными данными)
+            prov_data = PROVINCES_DATA.get(country_data['name'], [])
+            for pdata in prov_data:
+                cur.execute(
+                    "INSERT INTO provinces (name, country_id, terrain_type, climate_severity, economic_value, crime_rate, population) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (pdata['name'], country_id, pdata['terrain'], pdata['climate_severity'], pdata['economic_value'],
+                     pdata.get('crime_rate', 0), pdata.get('population', 0))
+                )
+                pid = cur.lastrowid
+                # Ресурсы провинции (залежи)
+                for res, amount in pdata.get('resources', {}).items():
+                    cur.execute(
+                        "INSERT OR IGNORE INTO province_resources (province_id, resource_name, amount) VALUES (?, ?, ?)",
+                        (pid, res, amount)
+                    )
             # Технологии
             branches = ['Военная доктрина', 'Вооружение и техника', 'Авиация и космос', 'Флот',
                         'Информационные технологии', 'Медицина и биотехнологии', 'Энергетика',
@@ -75,6 +88,14 @@ class Admin(commands.Cog):
                     "INSERT OR IGNORE INTO technologies (country_id, branch, level) VALUES (?, ?, 0)",
                     (country_id, branch)
                 )
+            # Лимиты построек
+            for btype, bdata in BUILDING_TYPES.items():
+                cur.execute(
+                    "INSERT OR IGNORE INTO building_limits (country_id, building_type, max_national, max_per_region) VALUES (?, ?, ?, ?)",
+                    (country_id, btype, bdata['max_national'], bdata['max_per_region'])
+                )
+            # Открываем одну базовую постройку (Ферма)
+            cur.execute("INSERT OR IGNORE INTO opened_buildings (country_id, building_type) VALUES (?, 'Ферма')", (country_id,))
         # Установка начальной игровой даты
         cur.execute("INSERT OR IGNORE INTO game_date (id, year, month, day) VALUES (1, 2000, 1, 1)")
         conn.commit()
