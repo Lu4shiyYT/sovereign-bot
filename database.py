@@ -99,7 +99,9 @@ def init_db():
         ('government_form', 'TEXT DEFAULT ""'),
         ('ideology', 'TEXT DEFAULT ""'),
         ('bot_strength', 'INTEGER DEFAULT 1'),
-        ('budget', 'REAL DEFAULT 0')
+        ('budget', 'REAL DEFAULT 0'),
+        ('industry_points', 'INTEGER DEFAULT 0'),
+        ('active_constructions', 'INTEGER DEFAULT 0')
     ]:
         try:
             cur.execute(f"ALTER TABLE countries ADD COLUMN {col} {col_def}")
@@ -129,22 +131,58 @@ def init_db():
             terrain_type TEXT DEFAULT 'plain',
             climate_severity INTEGER DEFAULT 1,
             economic_value REAL DEFAULT 1.0,
-            crime_rate REAL DEFAULT 50.0,
             fortification_level INTEGER DEFAULT 0,
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS province_resources (
+            province_id INTEGER NOT NULL,
+            resource_name TEXT NOT NULL,
+            amount REAL DEFAULT 0,
+            PRIMARY KEY (province_id, resource_name),
+            FOREIGN KEY (province_id) REFERENCES provinces(id)
+        )
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS buildings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            country_id INTEGER NOT NULL,
-            province_id INTEGER DEFAULT NULL,
+            country_id INTEGER,
+            province_id INTEGER NOT NULL,
             building_type TEXT NOT NULL,
-            custom_name TEXT DEFAULT '',
+            building_name TEXT DEFAULT 'Без названия',
             level INTEGER DEFAULT 0,
-            build_end_time REAL DEFAULT 0,
+            build_end_time REAL,
+            status TEXT DEFAULT 'completed',   -- 'constructing', 'upgrading', 'completed'
             FOREIGN KEY (country_id) REFERENCES countries(id),
             FOREIGN KEY (province_id) REFERENCES provinces(id)
+        )
+    """)
+    for col, col_def in [
+        ('building_name', 'TEXT DEFAULT "Без названия"'),
+        ('province_id', 'INTEGER DEFAULT 1'),
+        ('status', 'TEXT DEFAULT "completed"')
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE buildings ADD COLUMN {col} {col_def}")
+        except sqlite3.OperationalError:
+            pass
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS opened_buildings (
+            country_id INTEGER NOT NULL,
+            building_type TEXT NOT NULL,
+            PRIMARY KEY (country_id, building_type),
+            FOREIGN KEY (country_id) REFERENCES countries(id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS building_limits (
+            country_id INTEGER NOT NULL,
+            building_type TEXT NOT NULL,
+            max_national INTEGER DEFAULT 0,
+            max_per_region INTEGER DEFAULT 1,
+            PRIMARY KEY (country_id, building_type),
+            FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
     cur.execute("""
@@ -313,15 +351,6 @@ def init_db():
             resource_name TEXT NOT NULL,
             amount REAL DEFAULT 0,
             PRIMARY KEY (country_id, resource_name),
-            FOREIGN KEY (country_id) REFERENCES countries(id)
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS industrial_points (
-            country_id INTEGER NOT NULL,
-            building_type TEXT NOT NULL,
-            purchased_count INTEGER DEFAULT 0,
-            PRIMARY KEY (country_id, building_type),
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
