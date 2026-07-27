@@ -149,10 +149,7 @@ class Admin(commands.Cog):
         if not country:
             await interaction.response.send_message(f"Игрок {target.mention} не управляет страной.", ephemeral=True)
             return
-        await async_execute(
-            "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
-            (country['id'], amount, amount)
-        )
+        await async_execute("UPDATE countries SET budget = budget + ? WHERE id = ?", (amount, country['id']))
         await interaction.response.send_message(f"✅ Выдано {amount:,} долларов стране **{country['name']}** (игрок {target.mention}).", ephemeral=True)
 
     @app_commands.command(name="give_resource", description="Выдать ресурс стране (только админ)")
@@ -187,11 +184,10 @@ class Admin(commands.Cog):
         if not country:
             await interaction.response.send_message(f"Игрок {target.mention} не управляет страной.", ephemeral=True)
             return
-        money_row = await async_fetch_one("SELECT amount FROM resources WHERE country_id=? AND resource_name='Доллары'", (country['id'],))
-        if not money_row or money_row['amount'] < amount:
-            await interaction.response.send_message(f"У страны {country['name']} недостаточно денег (имеется {money_row['amount'] if money_row else 0}).", ephemeral=True)
+        if country['budget'] < amount:
+            await interaction.response.send_message(f"У страны {country['name']} недостаточно денег (имеется {country['budget']}).", ephemeral=True)
             return
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Доллары'", (amount, country['id']))
+        await async_execute("UPDATE countries SET budget = budget - ? WHERE id = ?", (amount, country['id']))
         await interaction.response.send_message(f"✅ Забрано {amount} долларов у страны **{country['name']}** ({target.mention}).", ephemeral=True)
 
     @app_commands.command(name="take_resource", description="Забрать ресурс у страны (только админ)")
