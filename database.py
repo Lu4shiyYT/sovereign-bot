@@ -108,13 +108,6 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
-    # Добавляем колонки в provinces, если их ещё нет
-    for col, col_def in [('crime_rate', 'REAL DEFAULT 0'), ('population', 'INTEGER DEFAULT 0')]:
-        try:
-            cur.execute(f"ALTER TABLE provinces ADD COLUMN {col} {col_def}")
-        except sqlite3.OperationalError:
-            pass
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS game_date (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -142,6 +135,12 @@ def init_db():
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
+    # Добавляем колонки в provinces, если их ещё нет
+    for col, col_def in [('crime_rate', 'REAL DEFAULT 0'), ('population', 'INTEGER DEFAULT 0')]:
+        try:
+            cur.execute(f"ALTER TABLE provinces ADD COLUMN {col} {col_def}")
+        except sqlite3.OperationalError:
+            pass
     cur.execute("""
         CREATE TABLE IF NOT EXISTS province_resources (
             province_id INTEGER NOT NULL,
