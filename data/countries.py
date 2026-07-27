@@ -5,7 +5,7 @@ initial_countries = [
     {"name": "Нигер", "type": "ужасно развитые", "population": 25_000_000, "budget": 4_000_000, "army": 7000, "religion": "Ислам", "government": "Президентская республика", "ideology": "Национализм", "bot_strength": 2},
     {"name": "ЦАР", "type": "ужасно развитые", "population": 5_000_000, "budget": 1_000_000, "army": 2000, "religion": "Христианство", "government": "Президентская республика", "ideology": "Национализм", "bot_strength": 1},
     {"name": "Нигерия", "type": "плохо развитые", "population": 220_000_000, "budget": 40_000_000, "army": 80000, "religion": "Христианство", "government": "Президентская республика", "ideology": "Национализм", "bot_strength": 4},
-    {"name": "Российская Федерация", "type": "сильно развитые", "population": 143_000_000, "budget": 2_660_000_000_000, "army": 600000, "religion": "Светское", "government": "Президентская республика", "ideology": "Демократия", "bot_strength": 10},
+    {"name": "Российская Федерация", "type": "сильно развитые", "population": 143_000_000, "budget": 2_660_000_000_000, "army": 600000, "religion": "Светское государство", "government": "Президентская республика", "ideology": "Демократия", "bot_strength": 10},
     # ... остальные страны с добавленными полями
 ]
 
