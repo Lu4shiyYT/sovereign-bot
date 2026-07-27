@@ -181,6 +181,12 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    for col, col_def in [('start_game_day', 'INTEGER DEFAULT 1'), ('start_game_month', 'INTEGER DEFAULT 1'), ('start_game_year', 'INTEGER DEFAULT 2000')]:
+        try:
+            cur.execute(f"ALTER TABLE wars ADD COLUMN {col} {col_def}")
+        except sqlite3.OperationalError:
+            pass
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS pacts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
