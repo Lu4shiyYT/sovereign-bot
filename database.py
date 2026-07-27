@@ -129,6 +129,7 @@ def init_db():
             terrain_type TEXT DEFAULT 'plain',
             climate_severity INTEGER DEFAULT 1,
             economic_value REAL DEFAULT 1.0,
+            crime_rate REAL DEFAULT 50.0,
             fortification_level INTEGER DEFAULT 0,
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
@@ -136,11 +137,14 @@ def init_db():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS buildings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            country_id INTEGER,
+            country_id INTEGER NOT NULL,
+            province_id INTEGER DEFAULT NULL,
             building_type TEXT NOT NULL,
+            custom_name TEXT DEFAULT '',
             level INTEGER DEFAULT 0,
-            build_end_time REAL,
-            FOREIGN KEY (country_id) REFERENCES countries(id)
+            build_end_time REAL DEFAULT 0,
+            FOREIGN KEY (country_id) REFERENCES countries(id),
+            FOREIGN KEY (province_id) REFERENCES provinces(id)
         )
     """)
     cur.execute("""
@@ -313,11 +317,11 @@ def init_db():
         )
     """)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS supply_stocks (
+        CREATE TABLE IF NOT EXISTS industrial_points (
             country_id INTEGER NOT NULL,
-            resource_name TEXT NOT NULL,
-            amount REAL DEFAULT 0,
-            PRIMARY KEY (country_id, resource_name),
+            building_type TEXT NOT NULL,
+            purchased_count INTEGER DEFAULT 0,
+            PRIMARY KEY (country_id, building_type),
             FOREIGN KEY (country_id) REFERENCES countries(id)
         )
     """)
