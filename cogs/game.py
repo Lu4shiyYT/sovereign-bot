@@ -1020,7 +1020,9 @@ class WarMainMenu(discord.ui.View):
 
     @discord.ui.button(label="Ваши войны", style=discord.ButtonStyle.primary)
     async def my_wars_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="Загрузка...", view=await self._build_wars_list(interaction.user.id))
+        await interaction.response.defer(ephemeral=True)
+        view = await self._build_wars_list(interaction.user.id)
+        await interaction.edit_original_response(content="Ваши войны:", view=view)
 
     @discord.ui.button(label="Мобилизация", style=discord.ButtonStyle.success)
     async def mobilization_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1041,7 +1043,6 @@ class WarMainMenu(discord.ui.View):
         )
         if not wars:
             return WarListEmptyView(self.country_id)
-
         wars_info = []
         for w in wars:
             attacker = await async_fetch_one("SELECT name FROM countries WHERE id=?", (w['attacker_id'],))
@@ -1094,9 +1095,10 @@ class PlayerSelectView(discord.ui.View):
         self.add_item(select)
 
     async def player_selected(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         target_id = int(interaction.data['values'][0])
         view = WarReasonView(self.country_id, target_id, is_bot=False)
-        await interaction.response.edit_message(content="Выберите причину войны:", view=view)
+        await interaction.edit_original_response(content="Выберите причину войны:", view=view)
 
 class BotSelectView(discord.ui.View):
     def __init__(self, country_id, bots):
@@ -1108,9 +1110,10 @@ class BotSelectView(discord.ui.View):
         self.add_item(select)
 
     async def bot_selected(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         target_id = int(interaction.data['values'][0])
         view = WarReasonView(self.country_id, target_id, is_bot=True)
-        await interaction.response.edit_message(content="Выберите причину войны:", view=view)
+        await interaction.edit_original_response(content="Выберите причину войны:", view=view)
 
 class WarReasonView(discord.ui.View):
     def __init__(self, country_id, target_id, is_bot):
@@ -1142,8 +1145,9 @@ class WarDescriptionModal(discord.ui.Modal, title="Описание войны (
     async def on_submit(self, interaction: discord.Interaction):
         war_cog = interaction.client.get_cog("War")
         if war_cog:
-            await war_cog._declare_war(interaction, self.country_id, self.target_id, self.reason,
-                                       self.description.value or "", is_bot=self.is_bot)
+            # Вызываем специальный метод для модального окна (без defer)
+            await war_cog._declare_war_from_modal(interaction, self.country_id, self.target_id, self.reason,
+                                                  self.description.value or "", is_bot=self.is_bot)
         else:
             await interaction.response.send_message("❌ Ког войны не загружен.", ephemeral=True)
 
@@ -1151,7 +1155,7 @@ class WarListView(discord.ui.View):
     def __init__(self, country_id, wars_info):
         super().__init__(timeout=None)
         self.country_id = country_id
-        self.wars_info = wars_info  # список словарей {id, attacker_name, defender_name, status}
+        self.wars_info = wars_info
         options = []
         for w in wars_info:
             status = "🟢" if w['status'] == 'active' else "⚪"
