@@ -1089,27 +1089,27 @@ class PlayerSelectView(discord.ui.View):
     def __init__(self, country_id, players):
         super().__init__(timeout=None)
         self.country_id = country_id
-        # Оставляем только тех, с кем нет активной войны
-        filtered = []
-        for p in players:
-            # Проверяем активную войну
-            existing = await async_fetch_one(
-                "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
-                (country_id, p['id'], p['id'], country_id)
-            )
-            if not existing:
-                filtered.append(p)
-        if not filtered:
+        self.players = players
+        # Создаём Select со всеми игроками, фильтрация произойдёт при нажатии
+        if not players:
             self.add_item(discord.ui.Button(label="Нет доступных игроков", disabled=True, style=discord.ButtonStyle.secondary))
             return
         select = discord.ui.Select(placeholder="Выберите игрока...",
-                                   options=[discord.SelectOption(label=f"{p['name']} (ID{p['owner_id']})", value=str(p['id'])) for p in filtered])
+                                   options=[discord.SelectOption(label=f"{p['name']} (ID{p['owner_id']})", value=str(p['id'])) for p in players])
         select.callback = self.player_selected
         self.add_item(select)
 
     async def player_selected(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         target_id = int(interaction.data['values'][0])
+        # Проверяем, нет ли активной войны с этим игроком
+        existing = await async_fetch_one(
+            "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
+            (self.country_id, target_id, target_id, self.country_id)
+        )
+        if existing:
+            await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
+            return
         view = WarReasonView(self.country_id, target_id, is_bot=False)
         await interaction.edit_original_response(content="Выберите причину войны:", view=view)
 
@@ -1117,25 +1117,25 @@ class BotSelectView(discord.ui.View):
     def __init__(self, country_id, bots):
         super().__init__(timeout=None)
         self.country_id = country_id
-        filtered = []
-        for b in bots:
-            existing = await async_fetch_one(
-                "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
-                (country_id, b['id'], b['id'], country_id)
-            )
-            if not existing:
-                filtered.append(b)
-        if not filtered:
+        self.bots = bots
+        if not bots:
             self.add_item(discord.ui.Button(label="Нет доступных ботов", disabled=True, style=discord.ButtonStyle.secondary))
             return
         select = discord.ui.Select(placeholder="Выберите бота...",
-                                   options=[discord.SelectOption(label=b['name'], value=str(b['id'])) for b in filtered])
+                                   options=[discord.SelectOption(label=b['name'], value=str(b['id'])) for b in bots])
         select.callback = self.bot_selected
         self.add_item(select)
 
     async def bot_selected(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         target_id = int(interaction.data['values'][0])
+        existing = await async_fetch_one(
+            "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
+            (self.country_id, target_id, target_id, self.country_id)
+        )
+        if existing:
+            await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
+            return
         view = WarReasonView(self.country_id, target_id, is_bot=True)
         await interaction.edit_original_response(content="Выберите причину войны:", view=view)
 
