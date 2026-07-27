@@ -1024,13 +1024,7 @@ class WarMainMenu(discord.ui.View):
 
     @discord.ui.button(label="Мобилизация", style=discord.ButtonStyle.success)
     async def mobilization_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Вызываем существующую команду мобилизации через Game
-        game_cog = interaction.client.get_cog("Game")
-        if game_cog:
-            # Эмулируем вызов команды (можно сделать кнопку-переход к команде)
-            await interaction.response.send_message("Используйте `/mobilize` для переключения мобилизации.", ephemeral=True)
-        else:
-            await interaction.response.send_message("Ошибка.", ephemeral=True)
+        await interaction.response.send_message("Используйте `/mobilize` для переключения мобилизации.", ephemeral=True)
 
     @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1040,7 +1034,6 @@ class WarMainMenu(discord.ui.View):
         country = await async_fetch_one("SELECT id FROM countries WHERE owner_id=?", (user_id,))
         if not country:
             return WarListEmptyView(self.country_id)
-        # Ищем все войны с участием этой страны
         wars = await async_fetch_all(
             "SELECT w.id, w.attacker_id, w.defender_id, w.status, w.start_time, w.reason "
             "FROM wars w WHERE w.attacker_id=? OR w.defender_id=? ORDER BY w.start_time DESC",
@@ -1057,7 +1050,6 @@ class WarDeclarationTypeMenu(discord.ui.View):
 
     @discord.ui.button(label="Объявить войну игроку", style=discord.ButtonStyle.danger)
     async def vs_player_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Показываем выбор игрока
         targets = await async_fetch_all(
             "SELECT id, name, owner_id FROM countries WHERE owner_id IS NOT NULL AND id != ?",
             (self.country_id,)
@@ -1092,7 +1084,6 @@ class PlayerSelectView(discord.ui.View):
 
     async def player_selected(self, interaction: discord.Interaction):
         target_id = int(interaction.data['values'][0])
-        # Переход к выбору причины
         view = WarReasonView(self.country_id, target_id, is_bot=False)
         await interaction.response.edit_message(content="Выберите причину войны:", view=view)
 
@@ -1116,7 +1107,7 @@ class WarReasonView(discord.ui.View):
         self.country_id = country_id
         self.target_id = target_id
         self.is_bot = is_bot
-        # Выпадающий список причин
+        from data.war_params import WAR_REASONS
         options = [discord.SelectOption(label=reason, value=reason) for reason in WAR_REASONS]
         select = discord.ui.Select(placeholder="Причина войны...", options=options)
         select.callback = self.reason_selected
@@ -1124,7 +1115,6 @@ class WarReasonView(discord.ui.View):
 
     async def reason_selected(self, interaction: discord.Interaction):
         reason = interaction.data['values'][0]
-        # Теперь запрашиваем описание (можно пропустить)
         modal = WarDescriptionModal(self.country_id, self.target_id, self.is_bot, reason)
         await interaction.response.send_modal(modal)
 
@@ -1151,7 +1141,6 @@ class WarListView(discord.ui.View):
         super().__init__(timeout=None)
         self.country_id = country_id
         self.wars = wars
-        # Создаём Select для выбора войны
         options = []
         for w in wars:
             attacker = await async_fetch_one("SELECT name FROM countries WHERE id=?", (w['attacker_id'],))
@@ -1165,7 +1154,6 @@ class WarListView(discord.ui.View):
 
     async def war_selected(self, interaction: discord.Interaction):
         war_id = int(interaction.data['values'][0])
-        # Детальная информация о войне (заглушка, потом сделаем полную)
         await interaction.response.send_message("Загрузка детальной информации...", ephemeral=True)
 
 class WarListEmptyView(discord.ui.View):
@@ -1174,7 +1162,6 @@ class WarListEmptyView(discord.ui.View):
         self.add_item(discord.ui.Button(label="Нет войн", disabled=True, style=discord.ButtonStyle.secondary))
         self.add_item(BackButton(country_id))
 
-# Класс BackButton остаётся как раньше
 class BackButton(discord.ui.Button):
     def __init__(self, country_id):
         super().__init__(label="◀ Назад", style=discord.ButtonStyle.secondary)
