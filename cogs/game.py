@@ -1041,7 +1041,18 @@ class WarMainMenu(discord.ui.View):
         )
         if not wars:
             return WarListEmptyView(self.country_id)
-        return WarListView(self.country_id, wars)
+
+        wars_info = []
+        for w in wars:
+            attacker = await async_fetch_one("SELECT name FROM countries WHERE id=?", (w['attacker_id'],))
+            defender = await async_fetch_one("SELECT name FROM countries WHERE id=?", (w['defender_id'],))
+            wars_info.append({
+                "id": w['id'],
+                "attacker_name": attacker['name'] if attacker else "Неизвестно",
+                "defender_name": defender['name'] if defender else "Неизвестно",
+                "status": w['status']
+            })
+        return WarListView(self.country_id, wars_info)
 
 class WarDeclarationTypeMenu(discord.ui.View):
     def __init__(self, country_id):
@@ -1137,16 +1148,14 @@ class WarDescriptionModal(discord.ui.Modal, title="Описание войны (
             await interaction.response.send_message("❌ Ког войны не загружен.", ephemeral=True)
 
 class WarListView(discord.ui.View):
-    def __init__(self, country_id, wars):
+    def __init__(self, country_id, wars_info):
         super().__init__(timeout=None)
         self.country_id = country_id
-        self.wars = wars
+        self.wars_info = wars_info  # список словарей {id, attacker_name, defender_name, status}
         options = []
-        for w in wars:
-            attacker = await async_fetch_one("SELECT name FROM countries WHERE id=?", (w['attacker_id'],))
-            defender = await async_fetch_one("SELECT name FROM countries WHERE id=?", (w['defender_id'],))
+        for w in wars_info:
             status = "🟢" if w['status'] == 'active' else "⚪"
-            label = f"{status} {attacker['name']} vs {defender['name']} ({w['status']})"
+            label = f"{status} {w['attacker_name']} vs {w['defender_name']} ({w['status']})"
             options.append(discord.SelectOption(label=label[:100], value=str(w['id'])))
         select = discord.ui.Select(placeholder="Выберите войну...", options=options)
         select.callback = self.war_selected
