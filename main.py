@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 import os
+from data.buildings import BUILDING_TYPES
 from keep_alive import keep_alive
 from database import init_db
 
@@ -63,6 +64,39 @@ async def monthly_income():
             elif b['building_type'] == "Бизнес-центр":
                 income_money += 200 * lvl
 
+        # Доход от всех завершённых построек страны
+        all_buildings = await async_fetch_all(
+            "SELECT * FROM buildings WHERE country_id=? AND status='completed'",
+            (c['id'],)
+        )
+        for b in all_buildings:
+            btype = BUILDING_TYPES.get(b['building_type'])
+            if not btype:
+                continue
+            level = b['level']
+            mult = btype['upgrade_multiplier'] ** level
+            # Ресурсы
+            for res, base in btype.get('resource_production', {}).items():
+                produced = int(base * mult)
+                # Проверяем, есть ли ещё ресурс в провинции
+                prov_res = await async_fetch_one(
+                    "SELECT amount FROM province_resources WHERE province_id=? AND resource_name=?",
+                    (b['province_id'], res)
+                )
+                if prov_res and prov_res['amount'] > 0:
+                    mined = min(produced, prov_res['amount'])
+                    await async_execute(
+                        "UPDATE province_resources SET amount = amount - ? WHERE province_id=? AND resource_name=?",
+                        (mined, b['province_id'], res)
+                    )
+                    await async_execute(
+                        "INSERT INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?) ON CONFLICT(country_id, resource_name) DO UPDATE SET amount = amount + ?",
+                        (c['id'], res, mined, mined)
+                    )
+            # Деньги
+            if btype.get('money_production'):
+                income_money += int(btype['money_production'] * mult)
+        
         if c['mobilization']:
             income_money = int(income_money * 0.5)
             for res in income_resources:
