@@ -906,7 +906,7 @@ class BuildingCategoryView(discord.ui.View):
         view = BuildingListView(self.country_id, self.province_id, buildings, mode='completed')
         await interaction.response.edit_message(content="Ваши постройки:", view=view)
 
-    @discord.ui.button(label="В процессе стройки", style=discord.ButtonStyle.warning)
+    @discord.ui.button(label="В процессе стройки", style=discord.ButtonStyle.primary)
     async def constructing_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         buildings = await async_fetch_all(
             "SELECT * FROM buildings WHERE country_id=? AND province_id=? AND status IN ('constructing','upgrading')",
