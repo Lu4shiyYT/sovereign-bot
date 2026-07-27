@@ -85,13 +85,12 @@ class Admin(commands.Cog):
         try:
             result = await asyncio.to_thread(self._init_game_sync)
             if result:
+                # Обновляем голосовой канал с датой 01.01.2000
+                voice_channel_id = 1529236474896322583
+                channel = interaction.guild.get_channel(voice_channel_id)
+                if channel and isinstance(channel, discord.VoiceChannel):
+                    await channel.edit(name="📅 01.01.2000")
                 await interaction.followup.send("✅ Игра инициализирована! Все страны созданы, база пересоздана.", ephemeral=True)
-        # Сбрасываем дату на 01.01.2000 и обновляем голосовой канал
-        await async_execute("UPDATE game_date SET day=1, month=1, year=2000 WHERE id=1")
-        voice_channel_id = 1529236474896322583
-        channel = interaction.guild.get_channel(voice_channel_id)
-        if channel and isinstance(channel, discord.VoiceChannel):
-            await channel.edit(name="📅 01.01.2000")
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка при инициализации: {e}", ephemeral=True)
 
