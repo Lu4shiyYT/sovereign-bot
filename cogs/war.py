@@ -658,19 +658,19 @@ class War(commands.Cog):
             attacker = await async_fetch_one("SELECT * FROM countries WHERE id=?", (attacker_id,))
             defender = await async_fetch_one("SELECT * FROM countries WHERE id=?", (defender_id,))
             if not attacker or not defender:
-                await interaction.followup.send("Страна не найдена.", ephemeral=True)
+                await interaction.response.send_message("Страна не найдена.", ephemeral=True)
                 return
             existing = await async_fetch_one(
                 "SELECT id FROM wars WHERE ((attacker_id=? AND defender_id=?) OR (attacker_id=? AND defender_id=?)) AND status='active'",
                 (attacker_id, defender_id, defender_id, attacker_id)
             )
             if existing:
-                await interaction.followup.send("Вы уже воюете с этой страной.", ephemeral=True)
+                await interaction.response.send_message("Вы уже воюете с этой страной.", ephemeral=True)
                 return
             await self._execute_war_declaration(interaction, attacker, defender, reason, description, is_bot=is_bot,
                                                 target_user=None if is_bot else (await self.bot.fetch_user(defender['owner_id']) if defender['owner_id'] else None))
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
     async def _make_peace(self, interaction: discord.Interaction, war_id: int):
         try:
