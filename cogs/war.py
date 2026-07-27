@@ -500,9 +500,10 @@ class War(commands.Cog):
             return
 
         now = time.time()
+        game_date = await async_get_game_date()  # уже вычислена выше, можно использовать date_str
         await async_execute(
-            "INSERT INTO wars (attacker_id, defender_id, status, start_time, reason, description) VALUES (?, ?, 'active', ?, ?, ?)",
-            (attacker['id'], defender['id'], now, reason, description or "")
+            "INSERT INTO wars (attacker_id, defender_id, status, start_time, reason, description, start_game_day, start_game_month, start_game_year) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?)",
+            (attacker['id'], defender['id'], now, reason, description or "", game_date.day, game_date.month, game_date.year)
         )
 
         # Инициализация линии фронта по всем провинциям участников
