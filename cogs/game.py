@@ -1215,8 +1215,30 @@ class WarActionButton(discord.ui.Button):
         self.country_id = country_id
 
     async def callback(self, interaction: discord.Interaction):
-        # Здесь можно открыть модальное окно для выбора типа хода
-        await interaction.response.send_message("Функция хода появится позже.", ephemeral=True)
+        view = WarMoveSelectView(self.war_id, self.country_id)
+        await interaction.response.send_message("Выберите действие:", view=view, ephemeral=True)
+
+class WarMoveSelectView(discord.ui.View):
+    def __init__(self, war_id, country_id):
+        super().__init__(timeout=None)
+        self.war_id = war_id
+        self.country_id = country_id
+        for action, label in [("attack", "Атака"), ("defend", "Оборона"), ("scout", "Разведка"),
+                              ("supply", "Снабжение/Логистика"), ("specops", "Спецоперация"), ("retreat", "Тактическое отступление")]:
+            btn = discord.ui.Button(label=label, style=discord.ButtonStyle.primary)
+            btn.callback = self.make_callback(action)
+            self.add_item(btn)
+
+    def make_callback(self, action):
+        async def cb(interaction: discord.Interaction):
+            await interaction.response.defer(ephemeral=True)
+            war_cog = interaction.client.get_cog("War")
+            if war_cog:
+                # Вызываем war_action напрямую с параметрами по умолчанию
+                await war_cog.war_action(interaction, action=action, attack_type="frontal_assault", target_army_percent=100)
+            else:
+                await interaction.followup.send("Ког войны не найден.", ephemeral=True)
+        return cb
 
 class PeaceOfferButton(discord.ui.Button):
     def __init__(self, war_id, country_id):
@@ -1499,7 +1521,10 @@ class Game(commands.Cog):
         # Исправлено: безопасное получение reason
         reason = war['reason'] if 'reason' in war.keys() else 'Не указана'
         embed.add_field(name="Причина", value=reason, inline=True)
-        embed.add_field(name="Дата начала", value=datetime.datetime.fromtimestamp(war['start_time']).strftime('%d.%m.%Y %H:%M'), inline=False)
+        game_day = war['start_game_day'] if 'start_game_day' in war.keys() else 1
+        game_month = war['start_game_month'] if 'start_game_month' in war.keys() else 1
+        game_year = war['start_game_year'] if 'start_game_year' in war.keys() else 2000
+        embed.add_field(name="Дата начала", value=f"{game_day:02d}.{game_month:02d}.{game_year}", inline=False)
         embed.add_field(name=f"{attacker['name']} (армия)", value=f"{attacker['army_count']} чел.", inline=True)
         embed.add_field(name=f"{defender['name']} (армия)", value=f"{defender['army_count']} чел.", inline=True)
 
