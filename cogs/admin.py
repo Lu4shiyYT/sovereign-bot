@@ -48,17 +48,19 @@ class Admin(commands.Cog):
                  country_data['budget'])
             )
             country_id = cur.lastrowid
-            # Ресурсы
-            for res in RESOURCE_NAMES:
+            # Природные ресурсы из данных страны
+            initial_res = country_data.get('initial_resources', {})
+            for res, amount in initial_res.items():
                 cur.execute(
                     "INSERT OR IGNORE INTO resources (country_id, resource_name, amount) VALUES (?, ?, ?)",
-                    (country_id, res, 1000)
+                    (country_id, res, amount)
                 )
-            # Деньги отдельно
-            cur.execute(
-                "INSERT OR IGNORE INTO resources (country_id, resource_name, amount) VALUES (?, 'Доллары', ?)",
-                (country_id, country_data['budget'])
-            )
+            # Произведённые ресурсы (пустые)
+            for res in MANUFACTURED_RESOURCES:
+                cur.execute(
+                    "INSERT OR IGNORE INTO supply_stocks (country_id, resource_name, amount) VALUES (?, ?, 0)",
+                    (country_id, res)
+                )
             # Провинции
             provinces = initial_provinces.get(country_data['name'], [country_data['name']])
             for pname in provinces:
