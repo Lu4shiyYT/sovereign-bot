@@ -84,6 +84,11 @@ class Admin(commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             result = await asyncio.to_thread(self._init_game_sync)
+                # Обновляем голосовой канал с датой
+                voice_channel_id = 1529236474896322583
+                channel = interaction.guild.get_channel(voice_channel_id)
+                if channel and isinstance(channel, discord.VoiceChannel):
+                    await channel.edit(name="📅 01.01.2000")
             if result:
                 await interaction.followup.send("✅ Игра инициализирована! Все страны созданы, база пересоздана.", ephemeral=True)
         except Exception as e:
