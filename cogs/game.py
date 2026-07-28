@@ -851,6 +851,7 @@ class ProvinceSelectView(discord.ui.View):
         self.add_item(select)
 
     async def select_province(self, interaction: discord.Interaction):
+        await interaction.response.defer()  # чтобы успеть загрузить данные
         province_id = int(interaction.data['values'][0])
         await self.show_province_info(interaction, province_id)
 
@@ -871,7 +872,7 @@ class ProvinceSelectView(discord.ui.View):
         if res_rows:
             info += "Потенциальные ресурсы: " + ", ".join(r['resource_name'] for r in res_rows) + "\n"
         view = ProvinceMenuView(self.country_id, province_id)
-        await interaction.response.edit_message(content=info, view=view)
+        await interaction.edit_original_response(content=info, view=view)
 
 class ProvinceMenuView(discord.ui.View):
     def __init__(self, country_id, province_id):
