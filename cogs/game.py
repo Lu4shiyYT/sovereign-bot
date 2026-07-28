@@ -973,14 +973,15 @@ class BuildingListView(discord.ui.View):
         self.add_item(BackButton(self.country_id))
 
     async def show_building_detail(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         building_id = int(interaction.data['values'][0])
         building = await async_fetch_one("SELECT * FROM buildings WHERE id=?", (building_id,))
         if not building:
-            await interaction.response.send_message("Постройка не найдена.", ephemeral=True)
+            await interaction.followup.send("Постройка не найдена.", ephemeral=True)
             return
         view = BuildingDetailView(self.country_id, self.province_id, building)
         embed = await self._build_building_embed(building)
-        await interaction.response.edit_message(content="", embed=embed, view=view)
+        await interaction.edit_original_response(content="", embed=embed, view=view)
 
     async def _build_building_embed(self, building):
         btype = BUILDING_TYPES[building['building_type']]
@@ -990,26 +991,39 @@ class BuildingListView(discord.ui.View):
             embed.add_field(name="Статус", value="✅ Завершена", inline=True)
         else:
             embed.add_field(name="Статус", value="Строится", inline=True)
+
         if building['status'] == 'completed':
-            # Показываем производство
             production = ""
             for res, base in btype.get('resource_production', {}).items():
                 prod = int(base * (btype['upgrade_multiplier'] ** building['level']))
-                production += f"{res}: {prod}/цикл\n"
+                production += f"{res}: {prod} ед. / цикл\n"
             if btype.get('money_production'):
                 prod = int(btype['money_production'] * (btype['upgrade_multiplier'] ** building['level']))
-                production += f"Доллары: {prod}/цикл\n"
+                production += f"Доллары: {prod} / цикл\n"
             if production:
-                embed.add_field(name="Производство", value=production, inline=False)
-            # Улучшение
+                embed.add_field(name="Производство (за 2 часа)", value=production, inline=False)
+
             next_level = building['level'] + 1
             if next_level > 5:
                 embed.add_field(name="Уровень", value="Максимальный", inline=False)
             else:
                 cost = btype['cost']
-                time_sec = btype['build_time'] * (btype['upgrade_multiplier'] ** building['level'])
-                cost_str = "\n".join(f"{r}: {int(amount * (btype['upgrade_multiplier'] ** building['level']))}" for r, amount in cost.items())
-                embed.add_field(name="Улучшение до уровня {}".format(next_level), value=f"Стоимость:\n{cost_str}\nВремя: {time_sec} сек", inline=False)
+                mult = btype['upgrade_multiplier'] ** building['level']
+                time_sec = int(btype['build_time'] * mult)
+                cost_str = ""
+                for r, amount in cost.items():
+                    if r == "Доллары":
+                        cost_str += f"Доллары: {int(amount * mult)} из бюджета\n"
+                    else:
+                        cost_str += f"{r}: {int(amount * mult)}\n"
+                embed.add_field(name=f"Улучшение до уровня {next_level}", value=f"Стоимость:\n{cost_str}Время: {time_sec} сек", inline=False)
+        else:
+            # Для строящихся – показываем время до завершения
+            remaining = int(building['build_end_time'] - time.time()) if building['build_end_time'] else 0
+            if remaining > 0:
+                embed.add_field(name="Осталось времени", value=f"{remaining} сек", inline=False)
+            if building['status'] == 'upgrading':
+                embed.add_field(name="Цель", value=f"Улучшение до уровня {building['level'] + 1}", inline=False)
         return embed
 
 class BuildingDetailView(discord.ui.View):
@@ -1022,7 +1036,18 @@ class BuildingDetailView(discord.ui.View):
             btype = BUILDING_TYPES[building['building_type']]
             if building['level'] < 5:
                 self.add_item(UpgradeButton(country_id, province_id, building))
-        self.add_item(BackButton(country_id))
+        # Кнопка «Назад» возвращает в список построек этой провинции
+        back_btn = discord.ui.Button(label="◀ Назад", style=discord.ButtonStyle.secondary)
+        back_btn.callback = self.back_to_building_list
+        self.add_item(back_btn)
+
+    async def back_to_building_list(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        buildings = await async_fetch_all(
+            "SELECT * FROM buildings WHERE country_id=? AND province_id=? AND status='completed'",
+            (self.country_id, self.province_id))
+        view = BuildingListView(self.country_id, self.province_id, buildings, mode='completed')
+        await interaction.edit_original_response(content="Ваши постройки:", view=view)
 
 class UpgradeButton(discord.ui.Button):
     def __init__(self, country_id, province_id, building):
