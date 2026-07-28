@@ -1861,10 +1861,12 @@ class Game(commands.Cog):
                     (boost, b['province_id'])
                 )
         # Уменьшаем счётчик активных строек на количество завершённых
-        completed = len(upgrading) + await async_fetch_one(
+        constructing_row = await async_fetch_one(
             "SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND status='constructing' AND build_end_time <= ?",
             (country_id, now)
         )
+        constructing_cnt = constructing_row['cnt'] if constructing_row else 0
+        completed = len(upgrading) + constructing_cnt
         if completed:
             await async_execute("UPDATE countries SET active_constructions = active_constructions - ? WHERE id=? AND active_constructions >= ?",
                                 (completed, country_id, completed))
