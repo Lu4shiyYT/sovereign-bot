@@ -856,21 +856,20 @@ class ProvinceSelectView(discord.ui.View):
         await self.show_province_info(interaction, province_id)
 
     async def show_province_info(self, interaction, province_id):
-        # Обновляем статусы построек перед показом информации
+        # Обновляем статусы построек
         game_cog = interaction.client.get_cog("Game")
         if game_cog:
             await game_cog._update_buildings_status(self.country_id)
-            
+
         province = await async_fetch_one("SELECT * FROM provinces WHERE id=?", (province_id,))
-        # Получить crime_rate и population из PROVINCES_DATA или из БД (если добавили поля)
-        # Пока заглушка
         info = f"**Регион: {province['name']}**\n"
         info += f"Тип местности: {province['terrain_type']}\n"
         info += f"Экономическая ценность: {province['economic_value']}\n"
-        # Ресурсы
+
         res_rows = await async_fetch_all("SELECT resource_name, amount FROM province_resources WHERE province_id=?", (province_id,))
         if res_rows:
             info += "Потенциальные ресурсы: " + ", ".join(r['resource_name'] for r in res_rows) + "\n"
+
         view = ProvinceMenuView(self.country_id, province_id)
         await interaction.edit_original_response(content=info, view=view)
 
@@ -880,15 +879,30 @@ class ProvinceMenuView(discord.ui.View):
         self.country_id = country_id
         self.province_id = province_id
 
+    async def show_info(self, interaction):
+        # Этот метод дублирует show_province_info из ProvinceSelectView, но находится в View
+        game_cog = interaction.client.get_cog("Game")
+        if game_cog:
+            await game_cog._update_buildings_status(self.country_id)
+        province = await async_fetch_one("SELECT * FROM provinces WHERE id=?", (self.province_id,))
+        info = f"**Регион: {province['name']}**\n"
+        info += f"Тип местности: {province['terrain_type']}\n"
+        info += f"Экономическая ценность: {province['economic_value']}\n"
+        res_rows = await async_fetch_all("SELECT resource_name, amount FROM province_resources WHERE province_id=?", (self.province_id,))
+        if res_rows:
+            info += "Потенциальные ресурсы: " + ", ".join(r['resource_name'] for r in res_rows) + "\n"
+        await interaction.edit_original_response(content=info, view=self)
+
     @discord.ui.button(label="Постройки", style=discord.ButtonStyle.primary)
     async def buildings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Выберите раздел:", view=BuildingCategoryView(self.country_id, self.province_id))
 
     @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         provinces = await async_fetch_all("SELECT id, name FROM provinces WHERE country_id=?", (self.country_id,))
         view = ProvinceSelectView(self.country_id, provinces)
-        await interaction.response.edit_message(content="Выберите регион:", view=view)
+        await interaction.edit_original_response(content="Выберите регион:", view=view)
 
 class BuildingCategoryView(discord.ui.View):
     def __init__(self, country_id, province_id):
@@ -931,7 +945,9 @@ class BuildingCategoryView(discord.ui.View):
 
     @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await ProvinceMenuView(self.country_id, self.province_id).show_province_info(interaction, self.province_id)
+        await interaction.response.defer()
+        view = ProvinceMenuView(self.country_id, self.province_id)
+        await view.show_info(interaction)
 
 class BuildingListView(discord.ui.View):
     def __init__(self, country_id, province_id, buildings, mode='completed'):
