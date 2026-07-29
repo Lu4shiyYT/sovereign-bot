@@ -9,6 +9,7 @@ initial_countries = [
         "government": "Президентская республика",
         "ideology": "Национализм",
         "bot_strength": 2,
+        "starting_tech_level": 0,
         "initial_resources": {
             "Нефть": 500_000_000,
             "Природный газ": 200_000_000_000,
@@ -39,6 +40,7 @@ initial_countries = [
         "government": "Теократия",
         "ideology": "Национализм",
         "bot_strength": 3,
+        "starting_tech_level": 0,
         "initial_resources": {
             "Нефть": 300_000_000,
             "Природный газ": 1_000_000_000_000,
