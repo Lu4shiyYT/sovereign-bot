@@ -94,8 +94,11 @@ class Admin(commands.Cog):
                     "INSERT OR IGNORE INTO building_limits (country_id, building_type, max_national, max_per_region) VALUES (?, ?, ?, ?)",
                     (country_id, btype, bdata['max_national'], bdata['max_per_region'])
                 )
-            # Открываем одну базовую постройку (Ферма)
-            cur.execute("INSERT OR IGNORE INTO opened_buildings (country_id, building_type) VALUES (?, 'Ферма')", (country_id,))
+            # Открываем все постройки, соответствующие tech_level страны
+            start_tech = country_data.get('starting_tech_level', 0)
+            for btype, bdata in BUILDING_TYPES.items():
+                if bdata.get('tech_level', 0) <= start_tech:
+                    cur.execute("INSERT OR IGNORE INTO opened_buildings (country_id, building_type) VALUES (?, ?)", (country_id, btype))
         # Установка начальной игровой даты
         cur.execute("INSERT OR IGNORE INTO game_date (id, year, month, day) VALUES (1, 2000, 1, 1)")
         conn.commit()
