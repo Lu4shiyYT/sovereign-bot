@@ -880,7 +880,6 @@ class ProvinceMenuView(discord.ui.View):
         self.province_id = province_id
 
     async def show_info(self, interaction):
-        # Этот метод дублирует show_province_info из ProvinceSelectView, но находится в View
         game_cog = interaction.client.get_cog("Game")
         if game_cog:
             await game_cog._update_buildings_status(self.country_id)
@@ -891,7 +890,8 @@ class ProvinceMenuView(discord.ui.View):
         res_rows = await async_fetch_all("SELECT resource_name, amount FROM province_resources WHERE province_id=?", (self.province_id,))
         if res_rows:
             info += "Потенциальные ресурсы: " + ", ".join(r['resource_name'] for r in res_rows) + "\n"
-        await interaction.edit_original_response(content=info, view=self)
+        view = self
+        await interaction.edit_original_response(content=info, view=view)
 
     @discord.ui.button(label="Постройки", style=discord.ButtonStyle.primary)
     async def buildings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1002,6 +1002,13 @@ class BuildingListView(discord.ui.View):
                 production += f"Доллары: {prod} / цикл\n"
             if production:
                 embed.add_field(name="Производство (за 2 часа)", value=production, inline=False)
+
+            effects = btype.get('effects', {})
+            if effects:
+                eff_str = ""
+                for key, value in effects.items():
+                    eff_str += f"{key}: {value * (building['level']+1)}\n"  # эффект зависит от уровня
+                embed.add_field(name="Эффекты", value=eff_str, inline=False)
 
             next_level = building['level'] + 1
             if next_level > 5:
@@ -1854,13 +1861,19 @@ class Game(commands.Cog):
 
     async def _update_buildings_status(self, country_id):
         now = time.time()
-        # Завершаем constructing -> completed (уровень остаётся 0)
-        await async_execute(
-            "UPDATE buildings SET status='completed', build_end_time=0 WHERE country_id=? AND status='constructing' AND build_end_time <= ?",
+        # Завершаем constructing (уровень 0)
+        constructing = await async_fetch_all(
+            "SELECT * FROM buildings WHERE country_id=? AND status='constructing' AND build_end_time <= ?",
             (country_id, now)
         )
-        # Завершаем upgrading -> completed и повышаем уровень
-        # Получаем список улучшающихся и завершившихся
+        for b in constructing:
+            await async_execute(
+                "UPDATE buildings SET status='completed', build_end_time=0 WHERE id=?",
+                (b['id'],)
+            )
+            await self._apply_building_effects(b)
+
+        # Завершаем upgrading
         upgrading = await async_fetch_all(
             "SELECT * FROM buildings WHERE country_id=? AND status='upgrading' AND build_end_time <= ?",
             (country_id, now)
@@ -1871,30 +1884,40 @@ class Game(commands.Cog):
                 "UPDATE buildings SET level=?, status='completed', build_end_time=0 WHERE id=?",
                 (new_level, b['id'])
             )
-        # Увеличиваем economic_value провинции (не более 10)
-        # Собираем все завершённые сейчас постройки (constructing и upgrading)
-        completed_buildings = upgrading + await async_fetch_all(
-            "SELECT * FROM buildings WHERE country_id=? AND status='constructing' AND build_end_time <= ?",
-            (country_id, now)
-        )
-        for b in completed_buildings:
-            btype = BUILDING_TYPES.get(b['building_type'])
-            if btype:
-                boost = 0.5 * (btype['upgrade_multiplier'] ** (b['level'] + 1))
-                await async_execute(
-                    "UPDATE provinces SET economic_value = MIN(10, economic_value + ?) WHERE id=?",
-                    (boost, b['province_id'])
-                )
-        # Уменьшаем счётчик активных строек на количество завершённых
-        constructing_row = await async_fetch_one(
-            "SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND status='constructing' AND build_end_time <= ?",
-            (country_id, now)
-        )
-        constructing_cnt = constructing_row['cnt'] if constructing_row else 0
-        completed = len(upgrading) + constructing_cnt
-        if completed:
-            await async_execute("UPDATE countries SET active_constructions = active_constructions - ? WHERE id=? AND active_constructions >= ?",
-                                (completed, country_id, completed))
+            await self._apply_building_effects(b)
+
+        # Счётчик активных строек
+        total_completed = len(constructing) + len(upgrading)
+        if total_completed > 0:
+            await async_execute(
+                "UPDATE countries SET active_constructions = active_constructions - ? WHERE id=? AND active_constructions >= ?",
+                (total_completed, country_id, total_completed)
+            )
+
+        async def _apply_building_effects(self, building):
+        btype = BUILDING_TYPES.get(building['building_type'])
+        if not btype or 'effects' not in btype:
+            return
+        level = building['level']
+        for key, value in btype['effects'].items():
+            if key == 'population':
+                # увеличиваем население провинции
+                await async_execute("UPDATE provinces SET population = population + ? WHERE id = ?", (value * (level+1), building['province_id']))
+            elif key == 'crime_rate':
+                await async_execute("UPDATE provinces SET crime_rate = MAX(0, crime_rate + ?) WHERE id = ?", (value * (level+1), building['province_id']))
+            elif key == 'citizen_mood':
+                await async_execute("UPDATE provinces SET citizen_mood = MIN(100, citizen_mood + ?) WHERE id = ?", (value * (level+1), building['province_id']))
+            elif key == 'health':
+                await async_execute("UPDATE provinces SET health = MIN(100, health + ?) WHERE id = ?", (value * (level+1), building['province_id']))
+            elif key == 'science_progress':
+                await async_execute("UPDATE countries SET science_progress = MIN(100, science_progress + ?) WHERE id = ?", (value * (level+1), building['country_id']))
+            elif key == 'ecology':
+                await async_execute("UPDATE countries SET ecology = MIN(100, ecology + ?) WHERE id = ?", (value * (level+1), building['country_id']))
+            elif key == 'economic_value':
+                await async_execute("UPDATE provinces SET economic_value = MIN(10, economic_value + ?) WHERE id = ?", (value * (level+1), building['province_id']))
+            elif key == 'army_capacity':
+                await async_execute("UPDATE countries SET army_capacity = army_capacity + ? WHERE id = ?", (value * (level+1), building['country_id']))
+            # другие эффекты можно добавить позже
 
     async def _notify_user(self, user_id, message):
         user = self.bot.get_user(user_id)
