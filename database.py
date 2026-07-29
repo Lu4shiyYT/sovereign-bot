@@ -100,6 +100,7 @@ def init_db():
         ('ideology', 'TEXT DEFAULT ""'),
         ('bot_strength', 'INTEGER DEFAULT 1'),
         ('budget', 'REAL DEFAULT 0'),
+        ('tech_level', 'INTEGER DEFAULT 0'),
         ('industry_points', 'INTEGER DEFAULT 0'),
         ('active_constructions', 'INTEGER DEFAULT 0')
     ]:
