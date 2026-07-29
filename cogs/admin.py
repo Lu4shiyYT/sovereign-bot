@@ -42,12 +42,12 @@ class Admin(commands.Cog):
         cur = conn.cursor()
         for country_data in initial_countries:
             cur.execute(
-                "INSERT INTO countries (name, type, owner_id, display_name, aggression_score, population, army_count, religion, government_form, ideology, bot_strength, budget) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO countries (name, type, owner_id, display_name, aggression_score, population, army_count, religion, government_form, ideology, bot_strength, budget, tech_level) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (country_data['name'], country_data['type'], None, country_data['name'], 50,
                  country_data['population'], country_data['army'], country_data['religion'],
                  country_data['government'], country_data['ideology'], country_data['bot_strength'],
-                 country_data['budget'])
+                 country_data['budget'], country_data.get('starting_tech_level', 0))
             )
             country_id = cur.lastrowid
             # Природные ресурсы из данных страны
