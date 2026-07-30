@@ -1123,6 +1123,7 @@ class NewBuildingTypeView(discord.ui.View):
         super().__init__(timeout=None)
         self.country_id = country_id
         self.province_id = province_id
+        self.available_types = available_types  # сохраняем для кнопки "Назад"
         options = [discord.SelectOption(label=t, value=t) for t in available_types]
         select = discord.ui.Select(placeholder="Тип постройки...", options=options)
         select.callback = self.type_selected
@@ -1130,8 +1131,175 @@ class NewBuildingTypeView(discord.ui.View):
 
     async def type_selected(self, interaction: discord.Interaction):
         building_type = interaction.data['values'][0]
-        modal = BuildingNameModal(self.country_id, self.province_id, building_type)
-        await interaction.response.send_modal(modal)
+        btype = BUILDING_TYPES[building_type]
+        await interaction.response.defer()
+
+        # Получаем актуальные данные страны
+        country = await async_fetch_one("SELECT * FROM countries WHERE id=?", (self.country_id,))
+        if not country:
+            await interaction.followup.send("Ошибка загрузки данных.", ephemeral=True)
+            return
+
+        # Проверка лимита одновременных строек
+        active_limit = 7
+        active_ok = country['active_constructions'] < active_limit
+
+        # Национальный лимит
+        nat_limit = await async_fetch_one(
+            "SELECT max_national FROM building_limits WHERE country_id=? AND building_type=?",
+            (self.country_id, building_type))
+        max_nat = nat_limit['max_national'] if nat_limit else 0
+        current_nat = await async_fetch_one(
+            "SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND building_type=?",
+            (self.country_id, building_type))
+        national_ok = current_nat['cnt'] < max_nat
+
+        # Региональный лимит
+        reg_limit = await async_fetch_one(
+            "SELECT max_per_region FROM building_limits WHERE country_id=? AND building_type=?",
+            (self.country_id, building_type))
+        max_reg = reg_limit['max_per_region'] if reg_limit else 1
+        current_reg = await async_fetch_one(
+            "SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND province_id=? AND building_type=?",
+            (self.country_id, self.province_id, building_type))
+        regional_ok = current_reg['cnt'] < max_reg
+
+        # Проверка ресурсов
+        cost = btype['cost']
+        money_ok = True
+        if "Доллары" in cost:
+            money_ok = country['budget'] >= cost["Доллары"]
+        resources_ok = True
+        for res, amount in cost.items():
+            if res == "Доллары":
+                continue
+            row = await async_fetch_one(
+                "SELECT amount FROM resources WHERE country_id=? AND resource_name=?",
+                (self.country_id, res))
+            if not row or row['amount'] < amount:
+                resources_ok = False
+                break
+
+        can_build = all([active_ok, national_ok, regional_ok, money_ok, resources_ok])
+
+        # Строим информационный embed
+        embed = discord.Embed(
+            title=f"Новая постройка: {building_type}",
+            description=btype.get('description', ''),
+            color=0x00ff00)
+        embed.add_field(name="Время строительства", value=f"{btype['build_time']} сек", inline=True)
+
+        cost_str = ""
+        for r, amt in cost.items():
+            cost_str += f"{r}: {amt}\n"
+        embed.add_field(name="Стоимость", value=cost_str, inline=False)
+
+        if btype.get('resource_production'):
+            prod_str = "\n".join(
+                f"{r}: {btype['resource_production'][r]} / цикл" for r in btype['resource_production'])
+            embed.add_field(name="Производство (за цикл)", value=prod_str, inline=False)
+
+        if btype.get('money_production'):
+            embed.add_field(name="Доход", value=f"{btype['money_production']} долларов / цикл", inline=False)
+
+        if btype.get('effects'):
+            eff_str = "\n".join(f"{k}: {v}" for k, v in btype['effects'].items())
+            embed.add_field(name="Эффекты", value=eff_str, inline=False)
+
+        # Кнопки
+        view = discord.ui.View()
+        build_btn = discord.ui.Button(
+            label="Построить",
+            style=discord.ButtonStyle.success,
+            disabled=not can_build)
+        build_btn.callback = self._make_build_callback(building_type, btype, cost)
+        view.add_item(build_btn)
+
+        back_btn = discord.ui.Button(label="Назад", style=discord.ButtonStyle.secondary)
+        back_btn.callback = self._back_to_type_selection
+        view.add_item(back_btn)
+
+        await interaction.edit_original_response(content="", embed=embed, view=view)
+
+    def _make_build_callback(self, building_type, btype, cost):
+        async def callback(interaction: discord.Interaction):
+            await interaction.response.defer(ephemeral=True)
+
+            # Повторная проверка всех условий (могло измениться)
+            country_now = await async_fetch_one("SELECT * FROM countries WHERE id=?", (self.country_id,))
+            if not country_now:
+                await interaction.followup.send("Ошибка данных.", ephemeral=True)
+                return
+
+            if country_now['active_constructions'] >= 7:
+                await interaction.followup.send("Достигнут лимит одновременных строек (7).", ephemeral=True)
+                return
+
+            nat_limit = await async_fetch_one(
+                "SELECT max_national FROM building_limits WHERE country_id=? AND building_type=?",
+                (self.country_id, building_type))
+            max_nat = nat_limit['max_national'] if nat_limit else 0
+            current_nat = await async_fetch_one(
+                "SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND building_type=?",
+                (self.country_id, building_type))
+            if current_nat['cnt'] >= max_nat:
+                await interaction.followup.send(f"Достигнут национальный лимит для {building_type}.", ephemeral=True)
+                return
+
+            reg_limit = await async_fetch_one(
+                "SELECT max_per_region FROM building_limits WHERE country_id=? AND building_type=?",
+                (self.country_id, building_type))
+            max_reg = reg_limit['max_per_region'] if reg_limit else 1
+            current_reg = await async_fetch_one(
+                "SELECT COUNT(*) as cnt FROM buildings WHERE country_id=? AND province_id=? AND building_type=?",
+                (self.country_id, self.province_id, building_type))
+            if current_reg['cnt'] >= max_reg:
+                await interaction.followup.send(f"Достигнут региональный лимит для {building_type}.", ephemeral=True)
+                return
+
+            # Проверка ресурсов
+            for res, amount in cost.items():
+                if res == "Доллары":
+                    if country_now['budget'] < amount:
+                        await interaction.followup.send("Недостаточно денег в бюджете.", ephemeral=True)
+                        return
+                else:
+                    row = await async_fetch_one(
+                        "SELECT amount FROM resources WHERE country_id=? AND resource_name=?",
+                        (self.country_id, res))
+                    if not row or row['amount'] < amount:
+                        await interaction.followup.send(f"Недостаточно {res}.", ephemeral=True)
+                        return
+
+            # Списание
+            if "Доллары" in cost:
+                await async_execute("UPDATE countries SET budget = budget - ? WHERE id=?",
+                                    (cost["Доллары"], self.country_id))
+            for res, amount in cost.items():
+                if res == "Доллары":
+                    continue
+                await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name=?",
+                                    (amount, self.country_id, res))
+
+            # Увеличиваем счётчик активных строек
+            await async_execute("UPDATE countries SET active_constructions = active_constructions + 1 WHERE id=?",
+                                (self.country_id,))
+
+            # Запуск строительства
+            end_time = time.time() + btype['build_time']
+            await async_execute(
+                "INSERT INTO buildings (country_id, province_id, building_type, building_name, level, build_end_time, status) "
+                "VALUES (?, ?, ?, ?, 0, ?, 'constructing')",
+                (self.country_id, self.province_id, building_type, building_type, end_time))
+
+            await interaction.followup.send(f"Строительство **{building_type}** началось! Завершится через {btype['build_time']} сек.", ephemeral=True)
+
+        return callback
+
+    async def _back_to_type_selection(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        view = NewBuildingTypeView(self.country_id, self.province_id, self.available_types)
+        await interaction.edit_original_response(content="Выберите тип постройки:", view=view, embed=None)
 
 class BuildingNameModal(discord.ui.Modal, title="Название постройки"):
     name = discord.ui.TextInput(label="Введите название", placeholder="Моя шахта", required=True)
