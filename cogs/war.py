@@ -286,13 +286,20 @@ class War(commands.Cog):
         return True, f"Произведено {quantity} ед. {equipment_name}."
 
     async def _consume_supplies(self, country_id, army_percent, action_type):
-        """Расходует топливо и боеприпасы пропорционально армии."""
-        country = await async_fetch_one("SELECT * FROM countries WHERE id=?", (country_id,))
-        army_count = country['army_count']
-        used_army = int(army_count * army_percent / 100)
-        # Пока просто заглушка: тратим условные единицы "Припасы"
-        await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'",
-                            (int(used_army * 0.01), country_id))
+        country = await async_fetch_one("SELECT army_count FROM countries WHERE id=?", (country_id,))
+        if not country:
+            return
+        used_army = int(country['army_count'] * army_percent / 100)
+        food_need = int(used_army * 0.01)
+        fuel_need = int(used_army * 0.005)
+        await async_execute(
+            "UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'",
+            (food_need, country_id)
+        )
+        await async_execute(
+            "UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Нефть'",
+            (fuel_need, country_id)
+        )
 
     async def _apply_equipment_losses(self, country_id, loss_ratio):
         """Уничтожает часть техники пропорционально потерям армии."""
