@@ -35,11 +35,13 @@ async def load_cogs():
 async def on_ready():
     print(f"Бот {bot.user} запущен!", flush=True)
     init_db()
-    await load_cogs()                # <-- загружаем коги здесь
+    await load_cogs()
     await bot.tree.sync()
     print("Синхронизация команд выполнена.", flush=True)
     if not monthly_income.is_running():
         monthly_income.start()
+    if not weather_update_loop.is_running():
+        weather_update_loop.start()
 
 # ---------- Месячный доход ----------
 @tasks.loop(hours=2)
@@ -163,6 +165,12 @@ async def monthly_income():
         except Exception as e:
             print(f"Не удалось изменить название канала: {e}")
 
+# ---------- Цикл обновления погоды (каждые 8 часов) ----------
+@tasks.loop(hours=8)
+async def weather_update_loop():
+    war_cog = bot.get_cog("War")
+    if war_cog:
+        await war_cog._update_weather()
 @bot.command(name="sync")
 @commands.is_owner()
 async def sync_commands(ctx):
