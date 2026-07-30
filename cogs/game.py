@@ -1770,11 +1770,55 @@ class WarMoveSelectView(discord.ui.View):
 
     def make_callback(self, action):
         async def cb(interaction: discord.Interaction):
+            if action == "attack":
+                await interaction.response.defer(ephemeral=True)
+                war_cog = interaction.client.get_cog("War")
+                my_country = await async_fetch_one("SELECT id FROM countries WHERE owner_id=?", (interaction.user.id,))
+                if not war_cog or not my_country:
+                    await interaction.followup.send("Ошибка.", ephemeral=True)
+                    return
+                enemy_provinces = await war_cog._get_frontline_provinces(self.war_id, my_country['id'])
+                if not enemy_provinces:
+                    await interaction.followup.send("Нет доступных провинций для атаки.", ephemeral=True)
+                    return
+                options = []
+                for ep in enemy_provinces:
+                    prov = await async_fetch_one("SELECT name FROM provinces WHERE id=?", (ep['province_id'],))
+                    options.append(discord.SelectOption(label=prov['name'], value=str(ep['province_id'])))
+                select = discord.ui.Select(placeholder="Выберите провинцию для атаки...", options=options)
+                async def province_selected(select_interaction: discord.Interaction):
+                    target_id = int(select_interaction.data['values'][0])
+                    tactic_view = TacticSelectView(self.war_id, self.country_id, target_id)
+                    await select_interaction.response.edit_message(content="Выберите тактику атаки:", view=tactic_view)
+                select.callback = province_selected
+                view = discord.ui.View()
+                view.add_item(select)
+                await interaction.edit_original_response(content="Выберите провинцию для атаки:", view=view)
+            else:
+                await interaction.response.defer(ephemeral=True)
+                war_cog = interaction.client.get_cog("War")
+                if war_cog:
+                    await war_cog.war_action(interaction, action=action)
+        return cb
+
+class TacticSelectView(discord.ui.View):
+    def __init__(self, war_id, country_id, target_province_id):
+        super().__init__(timeout=None)
+        self.war_id = war_id
+        self.country_id = country_id
+        self.target_province_id = target_province_id
+        for tactic_id, tactic_data in TACTICS.items():
+            btn = discord.ui.Button(label=tactic_data["name"], style=discord.ButtonStyle.primary)
+            btn.callback = self.make_tactic_callback(tactic_id)
+            self.add_item(btn)
+
+    def make_tactic_callback(self, tactic_id):
+        async def cb(interaction: discord.Interaction):
             await interaction.response.defer(ephemeral=True)
             war_cog = interaction.client.get_cog("War")
             if war_cog:
-                # Вызываем war_action напрямую с параметрами по умолчанию
-                await war_cog.war_action(interaction, action=action, attack_type="frontal_assault", target_army_percent=100)
+                await war_cog._perform_war_move(interaction, self.country_id, self.war_id, "attack",
+                                                attack_type=tactic_id, target_province_id=self.target_province_id)
             else:
                 await interaction.followup.send("Ког войны не найден.", ephemeral=True)
         return cb
