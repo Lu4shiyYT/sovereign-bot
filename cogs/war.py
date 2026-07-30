@@ -638,6 +638,64 @@ class War(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
+    async def _perform_war_move(self, interaction: discord.Interaction, country_id, war_id, action, attack_type="frontal_assault", target_province_id=None, target_army_percent=100):
+        my_country = await async_fetch_one("SELECT * FROM countries WHERE id=?", (country_id,))
+        if not my_country:
+            await interaction.followup.send("Страна не найдена.", ephemeral=True)
+            return
+        war = await async_fetch_one(
+            "SELECT id, attacker_id, defender_id FROM wars WHERE id=? AND (attacker_id=? OR defender_id=?) AND status='active'",
+            (war_id, country_id, country_id)
+        )
+        if not war:
+            await interaction.followup.send("Война не активна или вы не участвуете.", ephemeral=True)
+            return
+
+        moscow_tz = ZoneInfo("Europe/Moscow")
+        now = datetime.datetime.now(moscow_tz)
+        if now.minute < 30:
+            interval_start = now.replace(minute=0, second=0, microsecond=0)
+        else:
+            interval_start = now.replace(minute=30, second=0, microsecond=0)
+
+        existing = await async_fetch_one(
+            "SELECT id FROM war_moves WHERE war_id=? AND country_id=? AND created_at >= ? AND created_at < ?",
+            (war_id, country_id, interval_start.timestamp(), interval_start.timestamp() + 1800)
+        )
+        if existing:
+            await interaction.followup.send("Вы уже отдали приказ в этой половине часа.", ephemeral=True)
+            return
+
+        details = {"attack_type": attack_type, "army_percent": target_army_percent}
+        if action == "attack":
+            if target_province_id is None:
+                await interaction.followup.send("Не указана провинция для атаки.", ephemeral=True)
+                return
+            details["target_province_id"] = target_province_id
+
+        await async_execute(
+            "INSERT INTO war_moves (war_id, country_id, move_type, details, created_at) VALUES (?, ?, ?, ?, ?)",
+            (war_id, country_id, action, json.dumps(details), now.timestamp())
+        )
+        enemy_id = war['attacker_id'] if war['defender_id'] == country_id else war['defender_id']
+        enemy = await async_fetch_one("SELECT name, owner_id FROM countries WHERE id=?", (enemy_id,))
+        move_num = await async_fetch_one("SELECT COUNT(*) as cnt FROM war_moves WHERE war_id=?", (war_id,))
+        await interaction.followup.send(
+            f"✅ Вы сделали ход №{move_num['cnt']} в войне против **{enemy['name']}**.",
+            ephemeral=True
+        )
+        if enemy and enemy['owner_id']:
+            enemy_user = self.bot.get_user(enemy['owner_id'])
+            if enemy_user:
+                try:
+                    await enemy_user.send(f"⚠️ **{my_country['display_name'] or my_country['name']}** совершил ход в войне против вас.")
+                except:
+                    pass
+        if action == "scout":
+            await self._handle_scout(my_country, enemy, war, interaction)
+        elif action == "specops":
+            await self._execute_specops(my_country, enemy, war, interaction)
+
     # ================= ОБЪЯВЛЕНИЕ ВОЙНЫ =================
     async def _execute_war_declaration(self, interaction, attacker, defender, reason, description, is_bot=False, target_user=None):
         existing = await async_fetch_one(
