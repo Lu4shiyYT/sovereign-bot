@@ -1894,14 +1894,13 @@ class Game(commands.Cog):
                 (total_completed, country_id, total_completed)
             )
 
-        async def _apply_building_effects(self, building):
+    async def _apply_building_effects(self, building):
         btype = BUILDING_TYPES.get(building['building_type'])
         if not btype or 'effects' not in btype:
             return
         level = building['level']
         for key, value in btype['effects'].items():
             if key == 'population':
-                # увеличиваем население провинции
                 await async_execute("UPDATE provinces SET population = population + ? WHERE id = ?", (value * (level+1), building['province_id']))
             elif key == 'crime_rate':
                 await async_execute("UPDATE provinces SET crime_rate = MAX(0, crime_rate + ?) WHERE id = ?", (value * (level+1), building['province_id']))
@@ -1917,7 +1916,6 @@ class Game(commands.Cog):
                 await async_execute("UPDATE provinces SET economic_value = MIN(10, economic_value + ?) WHERE id = ?", (value * (level+1), building['province_id']))
             elif key == 'army_capacity':
                 await async_execute("UPDATE countries SET army_capacity = army_capacity + ? WHERE id = ?", (value * (level+1), building['country_id']))
-            # другие эффекты можно добавить позже
 
     async def _notify_user(self, user_id, message):
         user = self.bot.get_user(user_id)
@@ -2100,7 +2098,6 @@ class Game(commands.Cog):
         if country['budget'] < cost_money:
             await interaction.response.send_message("Недостаточно денег.", ephemeral=True)
             return
-        ...
         await async_execute("UPDATE countries SET budget = budget - ? WHERE id = ?", (cost_money, country['id']))
         await async_execute("UPDATE resources SET amount = amount - ? WHERE country_id=? AND resource_name='Продовольствие'", (cost_food, country['id']))
         new_army_count = current_army + amount
