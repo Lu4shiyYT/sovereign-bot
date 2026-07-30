@@ -1381,6 +1381,10 @@ class ArmyView(discord.ui.View):
     async def disband_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Используйте команду `/disband <количество>`", ephemeral=True)
 
+    @discord.ui.button(label="Произвести технику", style=discord.ButtonStyle.success)
+    async def produce_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Используйте команду `/produce_equipment <название> <количество>`. Список доступной техники в `/military_catalog`.", ephemeral=True)
+
     @discord.ui.button(label="Информация об армии", style=discord.ButtonStyle.secondary)
     async def info_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         country = await async_fetch_one("SELECT * FROM countries WHERE id=?", (self.country_id,))
