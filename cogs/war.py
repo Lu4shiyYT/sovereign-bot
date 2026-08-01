@@ -1102,12 +1102,37 @@ class PostWarView(discord.ui.View):
     @app_commands.describe(equipment="Тип техники (название из справочника)", quantity="Количество")
     async def produce_equipment(self, interaction: discord.Interaction, equipment: str, quantity: int):
         await interaction.response.defer(ephemeral=True)
-        country = await async_fetch_one("SELECT * FROM countries WHERE owner_id=?", (interaction.user.id,))
+        country = await self._get_country(interaction.user.id)
         if not country:
             await interaction.followup.send("Вы не управляете страной.", ephemeral=True)
             return
         success, msg = await self._produce_equipment(country['id'], equipment, quantity)
         await interaction.followup.send(msg, ephemeral=True)
+
+    @produce_equipment.autocomplete('equipment')
+    async def equipment_autocomplete(self, interaction: discord.Interaction, current: str):
+        all_items = []
+        for cat, items in {**MILITARY_EQUIPMENT, **WEAPONS}.items():
+            for item in items:
+                all_items.append(item['name'])
+        return [
+            app_commands.Choice(name=name, value=name)
+            for name in all_items if current.lower() in name.lower()
+        ][:25]
+
+    @app_commands.command(name="military_catalog", description="Справочник доступной военной техники")
+    async def military_catalog(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        lines = ["**Список доступной техники и оружия**\n"]
+        for category, items in MILITARY_EQUIPMENT.items():
+            lines.append(f"**{category}:**")
+            for item in items:
+                lines.append(f"- {item['name']} (сила {item['power']}, цена {item['cost']}$)")
+        lines.append("\n**Оружие:**")
+        for category, items in WEAPONS.items():
+            for item in items:
+                lines.append(f"- {item['name']} (сила {item['power']}, цена {item['cost']}$)")
+        await interaction.followup.send("\n".join(lines)[:2000], ephemeral=True)
 
 async def setup(bot):
     print("Adding War cog...", flush=True)
