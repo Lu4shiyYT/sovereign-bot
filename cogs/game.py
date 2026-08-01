@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from database import async_fetch_all, async_fetch_one, async_execute, async_get_game_date
 from data.buildings import BUILDING_TYPES
+from data.military import MILITARY_EQUIPMENT, WEAPONS
 try:
     from config import CHANNEL_IDS
 except ImportError:
@@ -1383,7 +1384,13 @@ class ArmyView(discord.ui.View):
 
     @discord.ui.button(label="Произвести технику", style=discord.ButtonStyle.success)
     async def produce_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Используйте команду `/produce_equipment <название> <количество>`. Список доступной техники в `/military_catalog`.", ephemeral=True)
+        # Показываем краткий список и предлагаем ввести команду
+        items_list = []
+        for cat, items in {**MILITARY_EQUIPMENT, **WEAPONS}.items():
+            for item in items:
+                items_list.append(f"{item['name']} ({item['cost']}$)")
+        text = "**Доступная техника и оружие:**\n" + "\n".join(items_list[:20]) + "\n\nИспользуйте `/produce_equipment` для заказа."
+        await interaction.response.edit_message(content=text, view=self)
 
     @discord.ui.button(label="Информация об армии", style=discord.ButtonStyle.secondary)
     async def info_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
